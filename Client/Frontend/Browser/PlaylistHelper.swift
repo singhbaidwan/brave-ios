@@ -102,7 +102,13 @@ class PlaylistHelper: TabContentScript {
             if item.detected {
                 self.delegate?.showPlaylistToast(info: item, itemState: .pendingUserAction)
             } else {
+                // Adding Preferences from Settings for showing the "Add to Playlist Alert"
+                guard Preferences.Playlist.showToastForAdd.value else {
+                    return
+                }
+                
                 // Has to be done otherwise it is impossible to play a video after selecting its elements
+                // Issue #3656
                 UIMenuController.shared.hideMenu()
                 
                 let style: UIAlertController.Style = UIDevice.current.userInterfaceIdiom == .pad ? .alert : .actionSheet
