@@ -214,23 +214,28 @@ struct CertificateView: View {
         let keySizeInBits = "\(publicKeyInfo.keySizeInBits) bits"
         
         var keyUsages = [String]()
-        if publicKeyInfo.keyUsage.contains(.encrpyt) {
+        if publicKeyInfo.keyUsage.contains(.DATA_ENCIPHERMENT) ||
+            (publicKeyInfo.keyUsage.contains(.KEY_AGREEMENT) && publicKeyInfo.keyUsage.contains(.KEY_ENCIPHERMENT)) {
             keyUsages.append("Encrypt")
         }
         
-        if publicKeyInfo.keyUsage.contains(.verify) {
+        if publicKeyInfo.keyUsage.contains(.DIGITAL_SIGNATURE) {
             keyUsages.append("Verify")
         }
         
-        if publicKeyInfo.keyUsage.contains(.wrap) {
+        if publicKeyInfo.keyUsage.contains(.KEY_ENCIPHERMENT) {
             keyUsages.append("Wrap")
         }
         
-        if publicKeyInfo.keyUsage.contains(.derive) {
+        if publicKeyInfo.keyUsage.contains(.KEY_AGREEMENT) {
             keyUsages.append("Derive")
         }
         
-        if publicKeyInfo.keyUsage.contains(.any) {
+        if publicKeyInfo.type == .RSA && (publicKeyInfo.keyUsage.isEmpty || publicKeyInfo.keyUsage.rawValue == BraveKeyUsage.INVALID.rawValue) {
+            keyUsages.append("Encrypt")
+            keyUsages.append("Verify")
+            keyUsages.append("Derive")
+        } else if publicKeyInfo.keyUsage.isEmpty || publicKeyInfo.keyUsage.rawValue == BraveKeyUsage.INVALID.rawValue {
             keyUsages.append("Any")
         }
         
@@ -296,7 +301,7 @@ struct CertificateView: View {
 }
 
 struct CertificateView_Previews: PreviewProvider {
-    private static func loadCertificate(name: String) -> SecCertificate? {
+    private static func loadCertificateData(name: String) -> CFData? {
         guard let path = Bundle.main.path(forResource: name, ofType: "cer") else {
             return nil
         }
@@ -304,12 +309,19 @@ struct CertificateView_Previews: PreviewProvider {
         guard let certificateData = try? Data(contentsOf: URL(fileURLWithPath: path)) as CFData else {
             return nil
         }
+        return certificateData
+    }
+    
+    private static func loadCertificate(name: String) -> SecCertificate? {
+        guard let certificateData = loadCertificateData(name: name) else {
+            return nil
+        }
         return SecCertificateCreateWithData(nil, certificateData)
     }
     
     static var previews: some View {
-        let certificate = loadCertificate(name: "570-ec")
-        let model = BraveCertificateModel(certificate: certificate!)
+        let certificate = loadCertificateData(name: "sect571r1") as Data?
+        let model = BraveCertificateModel(data: certificate!)
         
         CertificateView()
             .environmentObject(BraveCertificate(model: model!))
@@ -317,8 +329,15 @@ struct CertificateView_Previews: PreviewProvider {
 }
 
 class CertificateViewController {
-    private static func loadCertificate(name: String) -> SecCertificate? {
+    private static func getCertificatePath(name: String) -> String? {
         guard let path = Bundle.main.path(forResource: name, ofType: "cer") else {
+            return nil
+        }
+        return path
+    }
+    
+    private static func loadCertificate(name: String) -> SecCertificate? {
+        guard let path = getCertificatePath(name: name) else {
             return nil
         }
         
@@ -329,8 +348,11 @@ class CertificateViewController {
     }
     
     init() {
-        let certificate = CertificateViewController.loadCertificate(name: "570-ec")
-        let model = BraveCertificateModel(certificate: certificate!)
+        //let certificate = CertificateViewController.loadCertificate(name: "sect571r1")
+        let path = CertificateViewController.getCertificatePath(name: "sect571r1")
+        let data = try! Data(contentsOf: URL(fileURLWithPath: path!))
+        
+        let model = BraveCertificateModel(data: data)
         print(model)
     }
 }
