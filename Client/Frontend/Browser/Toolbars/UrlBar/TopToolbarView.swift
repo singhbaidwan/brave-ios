@@ -47,6 +47,7 @@ protocol TopToolbarDelegate: AnyObject {
     func topToolbarDidLongPressReloadButton(_ urlBar: TopToolbarView, from button: UIButton)
     func topToolbarDidPressStop(_ urlBar: TopToolbarView)
     func topToolbarDidPressReload(_ urlBar: TopToolbarView)
+    func topToolbarDidPressLockImageView(_ urlBar: TopToolbarView)
 }
 
 class TopToolbarView: UIView, ToolbarProtocol {
@@ -550,6 +551,10 @@ extension TopToolbarView: TabLocationViewDelegate {
     
     func tabLocationViewDidLongPressLocation(_ tabLocationView: TabLocationView) {
         delegate?.topToolbarDidLongPressLocation(self)
+    }
+    
+    func tabLocationViewDidTapLockImageView(_ tabLocationView: TabLocationView) {
+        delegate?.topToolbarDidPressLockImageView(self)
     }
     
     func tabLocationViewDidTapReload(_ tabLocationView: TabLocationView) {

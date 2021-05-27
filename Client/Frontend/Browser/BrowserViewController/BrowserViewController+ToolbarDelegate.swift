@@ -35,6 +35,26 @@ extension BrowserViewController: TopToolbarDelegate {
         self.tabTrayController = tabTrayController
     }
     
+    func topToolbarDidPressLockImageView(_ urlBar: TopToolbarView) {
+        guard let trust = tabManager.selectedTab?.webView?.serverTrust else {
+            return
+        }
+        
+        let serverCertificates = Set((0..<SecTrustGetCertificateCount(trust))
+            .compactMap { SecTrustGetCertificateAtIndex(trust, $0) })
+        
+        // TODO: Instead of showing only the first cert in the chain,
+        // have a UI that allows users to select any certificate in the chain (similar to Desktop browsers)
+        if let serverCertificate = serverCertificates.first,
+           let certificate = BraveCertificate(certificate: serverCertificate) {
+            let certificateViewController = CertificateViewController(certificate: certificate)
+            
+            let popover = PopoverController(contentController: certificateViewController, contentSizeBehavior: .autoLayout)
+            popover.addsConvenientDismissalMargins = false
+            popover.present(from: self.topToolbar.locationView.lockImageView, on: self)
+        }
+    }
+    
     func topToolbarDidPressReload(_ topToolbar: TopToolbarView) {
         tabManager.selectedTab?.reload()
     }
