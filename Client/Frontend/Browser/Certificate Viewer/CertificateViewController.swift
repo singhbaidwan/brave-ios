@@ -15,17 +15,16 @@ class BraveCertificate: ObservableObject {
     }
 }
 
-struct CertificateIconTitleView: View {
+struct CertificateTitleView: View {
     let isRootCertificate: Bool
     let commonName: String
     
     var body: some View {
-        HStack(alignment: .bottom, spacing: 15.0) {
+        HStack(alignment: .center, spacing: 15.0) {
             Image(uiImage: isRootCertificate ? #imageLiteral(resourceName: "Root") : #imageLiteral(resourceName: "Other"))
             VStack(alignment: .leading, spacing: 10.0) {
                 Text(commonName)
                     .font(.system(size: 16.0, weight: .bold))
-                Divider()
             }
         }
     }
@@ -36,33 +35,40 @@ struct CertificateTitleValueView: View, Hashable {
     let value: String
     
     var body: some View {
-        HStack(alignment: .top, spacing: 12.0) {
+        HStack(alignment: .center, spacing: 12.0) {
             Text(title)
                 .font(.system(size: 12.0))
-                .foregroundColor(Color(#colorLiteral(red: 0.4988772273, green: 0.4988895059, blue: 0.4988829494, alpha: 1)))
+                .foregroundColor(.black)
+            Spacer(minLength: 20.0)
             Text(value)
-                .font(.system(size: 12.0))
+                .lineLimit(nil)
+                .font(.system(size: 12.0, weight: .medium))
                 .foregroundColor(.black)
         }
     }
 }
 
-struct CertificateSectionView: View {
+struct CertificateSectionView<ContentView>: View where ContentView: View {
     let title: String
-    let values: [CertificateTitleValueView]
+    let values: [ContentView]
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 5.0) {
-            Text(title)
-                .font(.system(size: 12.0))
-                .foregroundColor(Color(#colorLiteral(red: 0.4988772273, green: 0.4988895059, blue: 0.4988829494, alpha: 1)))
-            ForEach(values, id: \.self) {
-                $0.padding(EdgeInsets(top: 0.0,
-                                      leading: 18.0,
-                                      bottom: 0.0,
-                                      trailing: 0.0))
+        Text(title)
+            .font(.system(size: 12.0))
+            .foregroundColor(Color(#colorLiteral(red: 0.4988772273, green: 0.4988895059, blue: 0.4988829494, alpha: 1)))
+        
+        VStack(alignment: .leading, spacing: 0.0) {
+            ForEach(values.indices, id: \.self) {
+                values[$0].padding(EdgeInsets(top: 10.0,
+                                      leading: 0.0,
+                                      bottom: 10.0,
+                                      trailing: 10.0))
+                
+                if $0 != values.count - 1 {
+                    Divider()
+                }
             }
-        }
+        }.padding(.leading, 10).background(Color(#colorLiteral(red: 0.9725490196, green: 0.9764705882, blue: 0.9843137255, alpha: 1))).cornerRadius(5.0)
     }
 }
 
@@ -72,68 +78,77 @@ struct CertificateView: View {
     var body: some View {
         ScrollView(.vertical, showsIndicators: true) {
             VStack(alignment: .leading, spacing: 5.0) {
-                CertificateIconTitleView(isRootCertificate: model.value.isRootCertificate,
-                                         commonName: model.value.subjectName.commonName)
-                Spacer(minLength: 35.0)
-                Group {
-                    // Subject Name
-                    CertificateSectionView(title: "Subject Name",
-                                           values: subjectNameViews())
-                    Spacer(minLength: 30.0)
+                CertificateTitleView(isRootCertificate:
+                                        model.value.isRootCertificate,
+                                     commonName: model.value.subjectName.commonName)
+                Spacer(minLength: 20.0)
+                VStack(alignment: .leading, spacing: 10.0) {
+                    // Subject name
+                    CertificateSectionView(title: "Subject Name", values: subjectNameViews())
                     
                     // Issuer name
                     CertificateSectionView(title: "Issuer Name",
                                            values: issuerNameViews())
-                    Spacer(minLength: 30.0)
                     
-                    // Serial number
-                    CertificateTitleValueView(title: "Serial Number",
-                                              value: formattedSerialNumber())
+                    // Common info
+                    CertificateSectionView(title: "Common Info",
+                                           values: [
+                      // Serial number
+                      CertificateTitleValueView(title: "Serial Number",
+                                                value: formattedSerialNumber()),
+                                            
+                      // Version
+                      CertificateTitleValueView(title: "Version",
+                                                value: "\(model.value.version)"),
+                                            
+                      // Signature Algorithm
+                      CertificateTitleValueView(title: "Signature Algorithm",
+                                                value: "\(model.value.signature.algorithm) (\(model.value.signature.objectIdentifier))"),
+                      //signatureParametersView().padding(.leading, 18.0)
+                    ])
                     
-                    // Version
-                    CertificateTitleValueView(title: "Version",
-                                              value: "\(model.value.version)")
+                    // Validity info
+                    CertificateSectionView(title: "Validity Dates",
+                                           values: [
+                      // Not Valid Before
+                      CertificateTitleValueView(title: "Not Valid Before",
+                                                value: formatDate(model.value.notValidBefore)),
                     
-                    // Signature Algorithm
-                    CertificateTitleValueView(title: "Signature Algorithm",
-                                              value: "\(model.value.signature.algorithm) (\(model.value.signature.objectIdentifier))")
-                    signatureParametersView().padding(.leading, 18.0)
-                }
-                
-                Spacer(minLength: 30.0)
-                
-                Group {
-                    // Not Valid Before
-                    CertificateTitleValueView(title: "Not Valid Before",
-                                              value: formatDate(model.value.notValidBefore))
-                    
-                    // Not Valid After
-                    CertificateTitleValueView(title: "Not Valid After",
-                                              value: formatDate(model.value.notValidAfter))
-                    Spacer(minLength: 30.0)
+                      // Not Valid After
+                      CertificateTitleValueView(title: "Not Valid After",
+                                                value: formatDate(model.value.notValidAfter))
+                    ])
                     
                     // Public Key Info
                     CertificateSectionView(title: "Public Key info",
                                            values: publicKeyInfoViews())
-                    Spacer(minLength: 30.0)
                     
                     // Signature
-                    CertificateTitleValueView(title: "Signature",
-                                                     value: formattedSignature())
-                    Spacer(minLength: 30.0)
+                    CertificateSectionView(title: "Signature",
+                                           values: [
+                      CertificateTitleValueView(title: "Signature",
+                                                value: formattedSignature())
+                    ])
                     
                     // Fingerprints
                     CertificateSectionView(title: "Fingerprints",
                                            values: fingerprintViews())
                 }
-            }
-            .padding()
+                Spacer(minLength: 10.0)
+                VStack(alignment: .leading, spacing: 10.0) {
+                    ForEach(extensionViews().indices, id: \.self) {
+                        extensionViews()[$0]
+                    }
+                }
+            }.padding()
             .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .topLeading)
         }
         .frame(maxHeight: .infinity)
         .environmentObject(model)
     }
-    
+}
+
+extension CertificateView {
     private func subjectNameViews() -> [CertificateTitleValueView] {
         let subjectName = model.value.subjectName
         
@@ -205,7 +220,7 @@ struct CertificateView: View {
             algorithm += " (\(publicKeyInfo.objectIdentifier))"
         }
         
-        let parameters = publicKeyInfo.parameters.isEmpty ? "None" : formatHex(publicKeyInfo.parameters)
+        let parameters = publicKeyInfo.parameters.isEmpty ? "None" : "\(publicKeyInfo.parameters.count / 2) bytes : \(formatHex(publicKeyInfo.parameters))"
         
         // TODO: Number Formatter
         let publicKey = "\(publicKeyInfo.keyBytesSize) bytes : \(formatHex(publicKeyInfo.keyHexEncoded))"
@@ -260,6 +275,28 @@ struct CertificateView: View {
     private func formattedSignature() -> String {
         let signature = model.value.signature
         return "\(signature.bytesSize) bytes : \(formatHex(signature.signatureHexEncoded))"
+    }
+    
+    private func extensionViews() -> [CertificateSectionView<CertificateTitleValueView>] {
+        let extensions = model.value.extensions
+        
+        var result = [CertificateSectionView<CertificateTitleValueView>]()
+        for certExtension in extensions {
+            if certExtension.nid <= 0 {
+                let view = CertificateSectionView(title: "Extension Unknown (\(certExtension.onid))", values: [
+                    
+                    CertificateTitleValueView(title: "Critical", value: certExtension.isCritical ? "YES" : "NO")
+                ])
+                result.append(view)
+            } else {
+                let view = CertificateSectionView(title: "Extension \(certExtension.title.replacingOccurrences(of: "X509v3 ", with: "")) (\(certExtension.onid))", values: [
+                    
+                    CertificateTitleValueView(title: "Critical", value: certExtension.isCritical ? "YES" : "NO")
+                ])
+                result.append(view)
+            }
+        }
+        return result
     }
     
     private func fingerprintViews() -> [CertificateTitleValueView] {
@@ -320,13 +357,14 @@ struct CertificateView_Previews: PreviewProvider {
     }
     
     static var previews: some View {
-        let certificate = loadCertificateData(name: "sect571r1") as Data?
+        let certificate = loadCertificateData(name: "leaf") as Data?
         let model = BraveCertificateModel(data: certificate!)
-        
+
         CertificateView()
             .environmentObject(BraveCertificate(model: model!))
     }
 }
+
 
 class CertificateViewController {
     private static func getCertificatePath(name: String) -> String? {
@@ -349,7 +387,7 @@ class CertificateViewController {
     
     init() {
         //let certificate = CertificateViewController.loadCertificate(name: "sect571r1")
-        let path = CertificateViewController.getCertificatePath(name: "sect571r1")
+        let path = CertificateViewController.getCertificatePath(name: "intermediate")
         let data = try! Data(contentsOf: URL(fileURLWithPath: path!))
         
         let model = BraveCertificateModel(data: data)
