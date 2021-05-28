@@ -40,8 +40,8 @@ extension BrowserViewController: TopToolbarDelegate {
             return
         }
         
-        let serverCertificates = Set((0..<SecTrustGetCertificateCount(trust))
-            .compactMap { SecTrustGetCertificateAtIndex(trust, $0) })
+        let serverCertificates = Array((0..<SecTrustGetCertificateCount(trust))
+            .compactMap { SecTrustGetCertificateAtIndex(trust, $0) }) // Should be `OrderedSet`
         
         // TODO: Instead of showing only the first cert in the chain,
         // have a UI that allows users to select any certificate in the chain (similar to Desktop browsers)

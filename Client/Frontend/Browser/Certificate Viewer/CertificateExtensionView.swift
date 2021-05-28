@@ -5,8 +5,9 @@
 
 import Foundation
 import BraveRewards
+import SwiftUI
 
-extension BraveKeyUsage: Hashable { }
+extension BraveKeyUsage: Hashable {}
 extension BraveNetscapeCertificateType: Hashable {}
 extension BraveCRLReasonFlags: Hashable {}
 extension BraveCRLReasonCode: Hashable {}
@@ -77,18 +78,10 @@ indirect enum BraveCertificateExtensionKeyValueType {
     case nested([BraveCertificateExtensionKeyValueType])
 }
 
-struct BraveCertificateExtensionKeyValueModel {
-    let key: String
-    let value: BraveCertificateExtensionKeyValueType
-}
+@objc
+protocol BraveCertificateAnySimplifiedExtensionModel {}
 
-enum BraveCertificateSimpleExtensionValue {
-    case string(String)
-    case hexString(String)
-    case keyValue([BraveCertificateExtensionKeyValueModel])
-}
-
-struct BraveCertificateSimplifiedExtensionModel {
+class BraveCertificateSimplifiedExtensionModel: BraveCertificateAnySimplifiedExtensionModel {
     let type: BraveExtensionType
     let isCritical: Bool
     let onid: String
@@ -96,7 +89,7 @@ struct BraveCertificateSimplifiedExtensionModel {
     let name: String
     let title: String
     
-    let extensionInfo: BraveCertificateSimpleExtensionValue
+    let extensionInfo: BraveCertificateExtensionKeyValueType
     
     init(genericModel: BraveCertificateGenericExtensionModel) {
         type = genericModel.type
@@ -110,17 +103,38 @@ struct BraveCertificateSimplifiedExtensionModel {
         case .STRING:
             extensionInfo = .string(genericModel.stringValue ?? "")
         case .HEX_STRING:
-            extensionInfo = .hexString(BraveCertificateUtilities.formatHex(genericModel.stringValue ?? ""))
+            if let hexValue = genericModel.stringValue {
+                extensionInfo = .hexString(BraveCertificateUtilities.formatHex(hexValue))
+            } else {
+                extensionInfo = .hexString("")
+            }
         case .KEY_VALUE:
-            extensionInfo = .keyValue(genericModel.arrayValue?.map({
-                BraveCertificateExtensionKeyValueModel(key: $0.key, value: .string($0.value))
-            }) ?? [])
+            if let array = genericModel.arrayValue, !array.isEmpty {
+                let pairs: [BraveCertificateExtensionKeyValueType] = array.compactMap {
+                    if !$0.key.isEmpty && !$0.value.isEmpty {
+                        return .keyValue($0.key, .string($0.value))
+                    }
+                    
+                    if $0.key.isEmpty {
+                        return .string($0.value)
+                    }
+                    
+                    if $0.value.isEmpty {
+                        return .string($0.key)
+                    }
+                    return nil
+                }
+                
+                extensionInfo = pairs.isEmpty ? .string("") : .nested(pairs)
+            } else {
+                extensionInfo = .string("")
+            }
         @unknown default:
             fatalError()
         }
     }
     
-    init(genericModel: BraveCertificateExtensionModel, extensionInfo: BraveCertificateSimpleExtensionValue) {
+    init(genericModel: BraveCertificateExtensionModel, extensionInfo: BraveCertificateExtensionKeyValueType) {
         type = genericModel.type
         isCritical = genericModel.isCritical
         onid = genericModel.onid
@@ -131,20 +145,86 @@ struct BraveCertificateSimplifiedExtensionModel {
     }
 }
 
+@objc
+protocol BraveCertificateSimplifiedExtensionProtocol {
+    var simplifiedModel: BraveCertificateAnySimplifiedExtensionModel { get }
+}
+
+struct RecursiveNestedKeyValueView: View {
+    let model: BraveCertificateExtensionKeyValueType
+    
+    var body: some View {
+        construct(model: model)
+    }
+    
+    private func construct(model: BraveCertificateExtensionKeyValueType) -> AnyView {
+        switch model {
+        case .string(let value):
+            return AnyView(CertificateKeyValueView(title: value))
+        case .boolean(let value):
+            return AnyView(CertificateKeyValueView(title: value ? "Yes" : "No"))
+        case .hexString(let value):
+            return AnyView(CertificateKeyValueView(title: value))
+        case .keyValue(let key, let value):
+            if case .keyValue = value {
+                return AnyView(VStack(alignment: .leading, spacing: 0.0) {
+                    CertificateKeyValueView(title: key)
+                    construct(model: value).padding(.leading, 20.0)
+                })
+            } else if case .nested = value {
+                return AnyView(VStack(alignment: .leading, spacing: 0.0) {
+                    CertificateKeyValueView(title: key)
+                    construct(model: value).padding(.leading, 20.0)
+                })
+            } else {
+                switch value {
+                case .string(let value):
+                    return AnyView(CertificateKeyValueView(title: key, value: value))
+                case .boolean(let value):
+                    return AnyView(CertificateKeyValueView(title: key, value: value ? "Yes" : "No"))
+                case .hexString(let value):
+                    return AnyView(CertificateKeyValueView(title: key, value: value))
+                default:
+                    return AnyView(EmptyView())
+                }
+            }
+        case .nested(let values):
+            return AnyView(
+                VStack {
+                    ForEach(values.indices) {
+                        construct(model: values[$0])
+                        
+                        if $0 < values.count - 1 {
+                            Divider()
+                        }
+                    }
+                }
+            )
+        }
+    }
+}
+
+extension BraveCertificateExtensionModel: BraveCertificateSimplifiedExtensionProtocol {
+    var simplifiedModel: BraveCertificateAnySimplifiedExtensionModel {
+        assertionFailure("Sub-Class MUST implement this variable")
+        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .string(""))
+    }
+}
+
 extension BraveCertificateBasicConstraintsExtensionModel {
-    func toKeyValuePairs() -> BraveCertificateSimplifiedExtensionModel {
-        let extensionValues = [
-            BraveCertificateExtensionKeyValueModel(key: "Critical", value: .boolean(isCritical)),
-            BraveCertificateExtensionKeyValueModel(key: "IsCA", value: .boolean(isCA))
+    override var simplifiedModel: BraveCertificateAnySimplifiedExtensionModel {
+        let extensionValues: [BraveCertificateExtensionKeyValueType] = [
+            .keyValue("Critical", .boolean(isCritical)),
+            .keyValue("IsCA", .boolean(isCA))
         ]
-        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .keyValue(extensionValues))
+        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .nested(extensionValues))
     }
 }
 
 extension BraveCertificateKeyUsageExtensionModel {
-    func toKeyValuePairs() -> BraveCertificateSimplifiedExtensionModel {
+    override var simplifiedModel: BraveCertificateAnySimplifiedExtensionModel {
         let mapping: [BraveKeyUsage: String] = [
-            .INVALID: "Invalid",
+            //.INVALID: "Invalid",
             .DIGITAL_SIGNATURE: "Digital Signature",
             .NON_REPUDIATION: "Non-Repudiation",
             .KEY_ENCIPHERMENT: "Key Encipherment",
@@ -160,54 +240,47 @@ extension BraveCertificateKeyUsageExtensionModel {
             keyUsage.contains($0.key) ? $0.value : nil
         }).joined(separator: ", ")
         
-        let extensionValues = [
-            BraveCertificateExtensionKeyValueModel(key: "Critical", value: .boolean(isCritical)),
-            BraveCertificateExtensionKeyValueModel(key: "Key Usage", value: .string(keyUsages))
+        let extensionValues: [BraveCertificateExtensionKeyValueType] = [
+            .keyValue("Critical", .boolean(isCritical)),
+            .keyValue("Key Usage", .string(keyUsages))
         ]
-        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .keyValue(extensionValues))
+        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .nested(extensionValues))
     }
 }
 
 extension BraveCertificateExtendedKeyUsageExtensionModel {
-    func toKeyValuePairs() -> BraveCertificateSimplifiedExtensionModel {
-        let extensionValues = [
-            BraveCertificateExtensionKeyValueModel(key: "Critical", value: .boolean(isCritical))
+    override var simplifiedModel: BraveCertificateAnySimplifiedExtensionModel {
+        let extensionValues: [BraveCertificateExtensionKeyValueType] = [
+            .keyValue("Critical", .boolean(isCritical))
         ] + keyPurposes.enumerated().map({
-            BraveCertificateExtensionKeyValueModel(key: "Purpose #\($0.offset + 1)",
-                                                   value: .string("\($0.element.name) (\($0.element.nidString)"))
+            .keyValue("Purpose #\($0.offset + 1)",
+                      .string("\($0.element.name) (\($0.element.nidString)"))
         })
         
-        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .keyValue(extensionValues))
+        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .nested(extensionValues))
     }
 }
 
 extension BraveCertificateSubjectKeyIdentifierExtensionModel {
-    func toKeyValuePairs() -> BraveCertificateSimplifiedExtensionModel {
-        let extensionValues = [
-            BraveCertificateExtensionKeyValueModel(key: "Critical", value: .boolean(isCritical)),
-            BraveCertificateExtensionKeyValueModel(key: "Key ID", value: .hexString(
-                                                    BraveCertificateUtilities.formatHex(hexEncodedkeyInfo))
-            )
+    override var simplifiedModel: BraveCertificateAnySimplifiedExtensionModel {
+        let extensionValues: [BraveCertificateExtensionKeyValueType] = [
+            .keyValue("Critical", .boolean(isCritical)),
+            .keyValue("Key ID", .hexString(BraveCertificateUtilities.formatHex(hexEncodedkeyInfo)))
         ]
-        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .keyValue(extensionValues))
+        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .nested(extensionValues))
     }
 }
 
 extension BraveCertificateAuthorityKeyIdentifierExtensionModel {
-    func toKeyValuePairs() -> BraveCertificateSimplifiedExtensionModel {
-        var extensionValues = [
-            BraveCertificateExtensionKeyValueModel(key: "Critical", value: .boolean(isCritical)),
-            BraveCertificateExtensionKeyValueModel(key: "Key ID", value: .hexString(
-                                                    BraveCertificateUtilities.formatHex(keyId))
-            )
+    override var simplifiedModel: BraveCertificateAnySimplifiedExtensionModel {
+        var extensionValues: [BraveCertificateExtensionKeyValueType] = [
+            .keyValue("Critical", .boolean(isCritical)),
+            .keyValue("Key ID", .hexString(BraveCertificateUtilities.formatHex(keyId)))
         ]
         
         if !serial.isEmpty {
-            extensionValues.append(BraveCertificateExtensionKeyValueModel(key: "Serial Number",
-                                                                          value: .hexString(
-                                                                            BraveCertificateUtilities.formatHex(serial)
-                                                                          ))
-            )
+            extensionValues.append(.keyValue("Serial Number",
+                                             .hexString(BraveCertificateUtilities.formatHex(serial))))
         }
         
         if !issuer.isEmpty {
@@ -215,227 +288,279 @@ extension BraveCertificateAuthorityKeyIdentifierExtensionModel {
                 BraveCertificateUtilities.generalNameToExtensionValueType($0)
             })
             
-            extensionValues.append(BraveCertificateExtensionKeyValueModel(key: "Issuer", value: .nested(issuerInfo)))
+            if !issuerInfo.isEmpty {
+                extensionValues.append(.keyValue("Issuer", .nested(issuerInfo)))
+            }
         }
         
-        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .keyValue(extensionValues))
+        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .nested(extensionValues))
     }
 }
 
 extension BraveCertificatePrivateKeyUsagePeriodExtensionModel {
-    func toKeyValuePairs() -> BraveCertificateSimplifiedExtensionModel {
-        var extensionInfo = [
-            BraveCertificateExtensionKeyValueModel(key: "Critical", value: .boolean(isCritical))
+    override var simplifiedModel: BraveCertificateAnySimplifiedExtensionModel {
+        var extensionValues: [BraveCertificateExtensionKeyValueType] = [
+            .keyValue("Critical", .boolean(isCritical))
         ]
         
         if let notBefore = notBefore {
-            extensionInfo.append(BraveCertificateExtensionKeyValueModel(key: "Not Before",
-                                                                        value: .string(
-                                                                            BraveCertificateUtilities.formatDate(notBefore)))
-            )
+            extensionValues.append(.keyValue("Not Before",
+                                             .string(BraveCertificateUtilities.formatDate(notBefore))))
         }
         
         if let notAfter = notAfter {
-            extensionInfo.append(BraveCertificateExtensionKeyValueModel(key: "Not After",
-                                                                        value: .string(
-                                                                            BraveCertificateUtilities.formatDate(notAfter)))
-            )
+            extensionValues.append(.keyValue("Not After",
+                                             .string(BraveCertificateUtilities.formatDate(notAfter))))
         }
         
-        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .keyValue(extensionInfo))
+        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .nested(extensionValues))
     }
 }
 
 extension BraveCertificateSubjectAlternativeNameExtensionModel {
-    func toKeyValuePairs() -> BraveCertificateSimplifiedExtensionModel {
-        var extensionValues = [
-            BraveCertificateExtensionKeyValueModel(key: "Critical", value: .boolean(isCritical))
+    override var simplifiedModel: BraveCertificateAnySimplifiedExtensionModel {
+        var extensionValues: [BraveCertificateExtensionKeyValueType] = [
+            .keyValue("Critical", .boolean(isCritical))
         ]
         
         let names = names.map({
             BraveCertificateUtilities.generalNameToExtensionValueType($0)
         })
         
-        extensionValues.append(BraveCertificateExtensionKeyValueModel(key: "Names", value: .nested(names)))
+        extensionValues.append(contentsOf: names)
         
-        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .keyValue(extensionValues))
+        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .nested(extensionValues))
     }
 }
 
 extension BraveCertificateIssuerAlternativeNameExtensionModel {
-    func toKeyValuePairs() -> BraveCertificateSimplifiedExtensionModel {
-        var extensionValues = [
-            BraveCertificateExtensionKeyValueModel(key: "Critical", value: .boolean(isCritical))
+    override var simplifiedModel: BraveCertificateAnySimplifiedExtensionModel {
+        var extensionValues: [BraveCertificateExtensionKeyValueType] = [
+            .keyValue("Critical", .boolean(isCritical))
         ]
         
         let names = names.map({
             BraveCertificateUtilities.generalNameToExtensionValueType($0)
         })
         
-        extensionValues.append(BraveCertificateExtensionKeyValueModel(key: "Names", value: .nested(names)))
+        extensionValues.append(contentsOf: names)
         
-        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .keyValue(extensionValues))
+        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .nested(extensionValues))
     }
 }
 
 extension BraveCertificateAuthorityInformationAccessExtensionModel {
-    func toKeyValuePairs() -> BraveCertificateSimplifiedExtensionModel {
-        var extensionValues = [
-            BraveCertificateExtensionKeyValueModel(key: "Critical", value: .boolean(isCritical)),
+    override var simplifiedModel: BraveCertificateAnySimplifiedExtensionModel {
+        var extensionValues: [BraveCertificateExtensionKeyValueType] = [
+            .keyValue("Critical", .boolean(isCritical)),
         ]
         
-        let accessDescriptions = accessDescriptions.map({
-            BraveCertificateExtensionKeyValueModel(key: "\($0.oidName) \($0.oid)",
-                                                   value: .nested($0.locations.map({ BraveCertificateUtilities.generalNameToExtensionValueType($0)
-                                                   })
-            ))
+        let accessDescriptions: [BraveCertificateExtensionKeyValueType] = accessDescriptions.compactMap({
+            if $0.locations.isEmpty {
+                return .string("\($0.oidName) \($0.oid)")
+            }
+            
+            return .keyValue("\($0.oidName) \($0.oid)", .nested($0.locations.map {
+                BraveCertificateUtilities.generalNameToExtensionValueType($0)
+            }))
         })
         
         extensionValues.append(contentsOf: accessDescriptions)
         
-        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .keyValue(extensionValues))
+        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .nested(extensionValues))
     }
 }
 
 extension BraveCertificateSubjectInformationAccessExtensionModel {
-    func toKeyValuePairs() -> BraveCertificateSimplifiedExtensionModel {
-        var extensionValues = [
-            BraveCertificateExtensionKeyValueModel(key: "Critical", value: .boolean(isCritical)),
+    override var simplifiedModel: BraveCertificateAnySimplifiedExtensionModel {
+        var extensionValues: [BraveCertificateExtensionKeyValueType] = [
+            .keyValue("Critical", .boolean(isCritical)),
         ]
         
-        let accessDescriptions = accessDescriptions.map({
-            BraveCertificateExtensionKeyValueModel(key: "\($0.oidName) \($0.oid)",
-                                                   value: .nested($0.locations.map({ BraveCertificateUtilities.generalNameToExtensionValueType($0)
-                                                   })
-            ))
+        let accessDescriptions: [BraveCertificateExtensionKeyValueType] = accessDescriptions.compactMap({
+            if $0.locations.isEmpty {
+                return .string("\($0.oidName) \($0.oid)")
+            }
+            
+            return .keyValue("\($0.oidName) \($0.oid)", .nested($0.locations.map {
+                BraveCertificateUtilities.generalNameToExtensionValueType($0)
+            }))
         })
         
         extensionValues.append(contentsOf: accessDescriptions)
         
-        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .keyValue(extensionValues))
+        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .nested(extensionValues))
     }
 }
 
 extension BraveCertificateNameConstraintsExtensionModel {
-    func toKeyValuePairs() -> BraveCertificateSimplifiedExtensionModel {
-        var extensionValues = [
-            BraveCertificateExtensionKeyValueModel(key: "Critical", value: .boolean(isCritical)),
+    override var simplifiedModel: BraveCertificateAnySimplifiedExtensionModel {
+        var extensionValues: [BraveCertificateExtensionKeyValueType] = [
+            .keyValue("Critical", .boolean(isCritical)),
         ]
         
         if !permittedSubtrees.isEmpty {
-            let permittedSubtrees = permittedSubtrees.enumerated().map({
-                BraveCertificateExtensionKeyValueType.keyValue("Tree #\($0.offset + 1)", .nested([
+            let permittedSubtrees: [BraveCertificateExtensionKeyValueType] = permittedSubtrees.enumerated().map({
+                var treeInfo: [BraveCertificateExtensionKeyValueType] = [
                     .keyValue("Minimum", .string($0.element.minimum)),
                     .keyValue("Maximum", .string($0.element.maximum)),
-                    .keyValue("Names", .nested($0.element.names.map {
+                ]
+                
+                if !$0.element.names.isEmpty {
+                    treeInfo.append(contentsOf: $0.element.names.map {
                         BraveCertificateUtilities.generalNameToExtensionValueType($0)
-                    })),
-                ]))
+                    })
+                }
+                
+                return .keyValue("Tree #\($0.offset + 1)", .nested(treeInfo))
             })
             
-            extensionValues.append(BraveCertificateExtensionKeyValueModel(key: "Permitted", value: .nested(permittedSubtrees)))
+            extensionValues.append(.keyValue("Permitted", .nested(permittedSubtrees)))
         }
         
         if !excludedSubtrees.isEmpty {
-            let excludedSubtrees = excludedSubtrees.enumerated().map({
-                BraveCertificateExtensionKeyValueType.keyValue("Tree #\($0.offset + 1)", .nested([
+            let excludedSubtrees: [BraveCertificateExtensionKeyValueType] = excludedSubtrees.enumerated().map({
+                var treeInfo: [BraveCertificateExtensionKeyValueType] = [
                     .keyValue("Minimum", .string($0.element.minimum)),
                     .keyValue("Maximum", .string($0.element.maximum)),
-                    .keyValue("Names", .nested($0.element.names.map {
+                ]
+                
+                if !$0.element.names.isEmpty {
+                    treeInfo.append(contentsOf: $0.element.names.map {
                         BraveCertificateUtilities.generalNameToExtensionValueType($0)
-                    })),
-                ]))
+                    })
+                }
+                
+                return .keyValue("Tree #\($0.offset + 1)", .nested(treeInfo))
             })
             
-            extensionValues.append(BraveCertificateExtensionKeyValueModel(key: "Excluded", value: .nested(excludedSubtrees)))
+            extensionValues.append(.keyValue("Excluded", .nested(excludedSubtrees)))
         }
         
-        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .keyValue(extensionValues))
+        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .nested(extensionValues))
     }
 }
 
 extension BraveCertificatePoliciesExtensionModel {
-    func toKeyValuePairs() -> BraveCertificateSimplifiedExtensionModel {
-        var extensionValues = [
-            BraveCertificateExtensionKeyValueModel(key: "Critical", value: .boolean(isCritical)),
+    override var simplifiedModel: BraveCertificateAnySimplifiedExtensionModel {
+        var extensionValues: [BraveCertificateExtensionKeyValueType] = [
+            .keyValue("Critical", .boolean(isCritical)),
         ]
         
-        let policies = policies.enumerated().map({
-            BraveCertificateExtensionKeyValueModel(key: "Policy #\($0.offset + 1) (\($0.element.oid))",
-                                                   value: .nested($0.element.qualifiers.map {
-                .keyValue("Qualifier ID #\($0.pqualId)", .nested([
-                    .keyValue("CPS", .string($0.cps)),
-                    .keyValue("Notice", .nested([
-                        .keyValue("Organization", .string($0.notice?.organization ?? "")),
-                        .keyValue("Notice Numbers", .string($0.notice?.noticeNumbers.joined(separator: ", ") ?? "")),
-                        .keyValue("Explicit Text", .string($0.notice?.explicitText ?? ""))
-                    ]))
-                ]))
+        let policies: [BraveCertificateExtensionKeyValueType] = policies.enumerated().map({
+            if $0.element.qualifiers.isEmpty {
+                return .string("Policy #\($0.offset + 1) (\($0.element.oid))")
+            }
+            
+            return .keyValue("Policy #\($0.offset + 1) (\($0.element.oid))", .nested($0.element.qualifiers.map {
+                var qualifierInfo = [BraveCertificateExtensionKeyValueType]()
+                if !$0.cps.isEmpty {
+                    qualifierInfo.append(.keyValue("CPS", .string($0.cps)))
+                }
+                
+                if let notice = $0.notice {
+                    var noticeInfo = [BraveCertificateExtensionKeyValueType]()
+                    if !notice.organization.isEmpty {
+                        noticeInfo.append(.keyValue("Organization", .string(notice.organization)))
+                    }
+                    
+                    if !notice.noticeNumbers.isEmpty {
+                        noticeInfo.append(.keyValue("Notice Numbers", .string(notice.noticeNumbers.joined(separator: ", "))))
+                    }
+                    
+                    if !notice.explicitText.isEmpty {
+                        noticeInfo.append(.keyValue("Explicit Text", .string(notice.explicitText)))
+                    }
+                    
+                    if !noticeInfo.isEmpty {
+                        qualifierInfo.append(.keyValue("Notice", .nested(noticeInfo)))
+                    }
+                }
+                
+                return qualifierInfo.isEmpty ? .string("Qualifier ID #\($0.pqualId)") : .keyValue("Qualifier ID #\($0.pqualId)", .nested(qualifierInfo))
             }))
         })
         
         extensionValues.append(contentsOf: policies)
         
-        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .keyValue(extensionValues))
+        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .nested(extensionValues))
     }
 }
 
 extension BraveCertificatePolicyMappingsExtensionModel {
-    func toKeyValuePairs() -> BraveCertificateSimplifiedExtensionModel {
-        var extensionValues = [
-            BraveCertificateExtensionKeyValueModel(key: "Critical", value: .boolean(isCritical)),
+    override var simplifiedModel: BraveCertificateAnySimplifiedExtensionModel {
+        var extensionValues: [BraveCertificateExtensionKeyValueType] = [
+            .keyValue("Critical", .boolean(isCritical)),
         ]
         
-        let policies = policies.enumerated().map({
-            BraveCertificateExtensionKeyValueModel(key: "Policy #\($0.offset + 1)", value: .nested([
-                .keyValue("Subject Domain", .string($0.element.subjectDomainPolicy)),
-                .keyValue("Issuer Domain", .string($0.element.issuerDomainPolicy))
-            ]))
+        let policies: [BraveCertificateExtensionKeyValueType] = policies.enumerated().map({
+            var policyInfo = [BraveCertificateExtensionKeyValueType]()
+            if !$0.element.subjectDomainPolicy.isEmpty {
+                policyInfo.append(.keyValue("Subject Domain", .string($0.element.subjectDomainPolicy)))
+            }
+            
+            if !$0.element.issuerDomainPolicy.isEmpty {
+                policyInfo.append(.keyValue("Issuer Domain", .string($0.element.issuerDomainPolicy)))
+            }
+            
+            return policyInfo.isEmpty ? .string("Policy #\($0.offset + 1)") : .keyValue("Policy #\($0.offset + 1)", .nested(policyInfo))
         })
         
         extensionValues.append(contentsOf: policies)
-        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .keyValue(extensionValues))
+        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .nested(extensionValues))
     }
 }
 
 extension BraveCertificatePolicyConstraintsExtensionModel {
-    func toKeyValuePairs() -> BraveCertificateSimplifiedExtensionModel {
-        let extensionValues = [
-            BraveCertificateExtensionKeyValueModel(key: "Critical", value: .boolean(isCritical)),
-            BraveCertificateExtensionKeyValueModel(key: "Require Explicit Policy", value: .string(requireExplicitPolicy)),
-            BraveCertificateExtensionKeyValueModel(key: "Inhibit Policy Mapping", value: .string(inhibitPolicyMapping))
+    override var simplifiedModel: BraveCertificateAnySimplifiedExtensionModel {
+        var extensionValues: [BraveCertificateExtensionKeyValueType] = [
+            .keyValue("Critical", .boolean(isCritical))
         ]
-        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .keyValue(extensionValues))
+        
+        if !requireExplicitPolicy.isEmpty {
+            extensionValues.append(.keyValue("Require Explicit Policy", .string(requireExplicitPolicy)))
+        }
+        
+        if !inhibitPolicyMapping.isEmpty {
+            extensionValues.append(.keyValue("Inhibit Policy Mapping", .string(inhibitPolicyMapping)))
+        }
+        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .nested(extensionValues))
     }
 }
 
 extension BraveCertificateInhibitAnyPolicyExtensionModel {
-    func toKeyValuePairs() -> BraveCertificateSimplifiedExtensionModel {
-        let extensionValues = [
-            BraveCertificateExtensionKeyValueModel(key: "Critical", value: .boolean(isCritical)),
-            BraveCertificateExtensionKeyValueModel(key: "Policy Any", value: .string(policyAny)),
+    override var simplifiedModel: BraveCertificateAnySimplifiedExtensionModel {
+        var extensionValues: [BraveCertificateExtensionKeyValueType] = [
+            .keyValue("Critical", .boolean(isCritical))
         ]
-        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .keyValue(extensionValues))
+        
+        if !policyAny.isEmpty {
+            extensionValues.append(.keyValue("Policy Any", .string(policyAny)))
+        }
+        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .nested(extensionValues))
     }
 }
 
 extension BraveCertificateTLSFeatureExtensionModel {
-    func toKeyValuePairs() -> BraveCertificateSimplifiedExtensionModel {
-        let extensionValues = [
-            BraveCertificateExtensionKeyValueModel(key: "Critical", value: .boolean(isCritical)),
-            BraveCertificateExtensionKeyValueModel(key: "Features", value: .string(
-                features.map({ "v\($0.int64Value)" }).joined(separator: ", ")
-            )),
+    override var simplifiedModel: BraveCertificateAnySimplifiedExtensionModel {
+        var extensionValues: [BraveCertificateExtensionKeyValueType] = [
+            .keyValue("Critical", .boolean(isCritical))
         ]
-        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .keyValue(extensionValues))
+        
+        if !features.isEmpty {
+            extensionValues.append(.keyValue("Features", .string(
+                features.map({ "v\($0.int64Value)" }).joined(separator: ", ")
+            )))
+        }
+        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .nested(extensionValues))
     }
 }
     
 // Netscape Certificate Extensions - Largely Obsolete
 extension BraveCertificateNetscapeCertTypeExtensionModel {
-    func toKeyValuePairs() -> BraveCertificateSimplifiedExtensionModel {
+    override var simplifiedModel: BraveCertificateAnySimplifiedExtensionModel {
         let mapping: [BraveNetscapeCertificateType: String] = [
-            .INVALID: "Invalid",
+            //.INVALID: "Invalid",
             .SSL_CLIENT: "SSL Client",
             .SSL_SERVER: "SSL Server",
             .SMIME: "SMIME",
@@ -450,147 +575,229 @@ extension BraveCertificateNetscapeCertTypeExtensionModel {
             certType.contains($0.key) ? $0.value : nil
         }).joined(separator: ", ")
         
-        let extensionValues = [
-            BraveCertificateExtensionKeyValueModel(key: "Critical", value: .boolean(isCritical)),
-            BraveCertificateExtensionKeyValueModel(key: "Purposes", value: .string(certTypes))
+        var extensionValues: [BraveCertificateExtensionKeyValueType] = [
+            .keyValue("Critical", .boolean(isCritical))
         ]
         
-        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .keyValue(extensionValues))
+        if !certTypes.isEmpty {
+            extensionValues.append(.keyValue("Purposes", .string(certTypes)))
+        }
+        
+        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .nested(extensionValues))
     }
 }
 
 extension BraveCertificateNetscapeURLExtensionModel {
-    func toKeyValuePairs() -> BraveCertificateSimplifiedExtensionModel {
-        let extensionValues = [
-            BraveCertificateExtensionKeyValueModel(key: "Critical", value: .boolean(isCritical)),
-            BraveCertificateExtensionKeyValueModel(key: "URL", value: .string(url))
+    override var simplifiedModel: BraveCertificateAnySimplifiedExtensionModel {
+        var extensionValues: [BraveCertificateExtensionKeyValueType] = [
+            .keyValue("Critical", .boolean(isCritical))
         ]
         
-        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .keyValue(extensionValues))
+        if !url.isEmpty {
+            extensionValues.append(.keyValue("URL", .string(url)))
+        }
+        
+        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .nested(extensionValues))
     }
 }
 
 extension BraveCertificateNetscapeStringExtensionModel {
-    func toKeyValuePairs() -> BraveCertificateSimplifiedExtensionModel {
-        let extensionValues = [
-            BraveCertificateExtensionKeyValueModel(key: "Critical", value: .boolean(isCritical)),
-            BraveCertificateExtensionKeyValueModel(key: "String", value: .string(string))
+    override var simplifiedModel: BraveCertificateAnySimplifiedExtensionModel {
+        var extensionValues: [BraveCertificateExtensionKeyValueType] = [
+            .keyValue("Critical", .boolean(isCritical))
         ]
         
-        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .keyValue(extensionValues))
+        if !string.isEmpty {
+            extensionValues.append(.keyValue("String", .string(string)))
+        }
+        
+        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .nested(extensionValues))
     }
 }
 
 // Miscellaneous Certificate Extensions
 extension BraveCertificateSXNetExtensionModel {
-    func toKeyValuePairs() -> BraveCertificateSimplifiedExtensionModel {
-        let extensionValues = [
-            BraveCertificateExtensionKeyValueModel(key: "Critical", value: .boolean(isCritical)),
-            BraveCertificateExtensionKeyValueModel(key: "Version", value: .string("\(version + 1)")),
-            BraveCertificateExtensionKeyValueModel(key: "IDs", value: .nested(ids.enumerated().flatMap {
-                [BraveCertificateExtensionKeyValueType.keyValue("Zone #\($0.offset + 1)", .string($0.element.idZone)),
-                 BraveCertificateExtensionKeyValueType.keyValue("User #\($0.offset + 1)", .string($0.element.idUser))]
-            })),
+    override var simplifiedModel: BraveCertificateAnySimplifiedExtensionModel {
+        var extensionValues: [BraveCertificateExtensionKeyValueType] = [
+            .keyValue("Critical", .boolean(isCritical)),
+            .keyValue("Version", .string("\(version + 1)"))
         ]
         
-        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .keyValue(extensionValues))
+        if !ids.isEmpty {
+            let ids = ids.enumerated().flatMap { enumerated -> [BraveCertificateExtensionKeyValueType] in
+                var values = [BraveCertificateExtensionKeyValueType]()
+                if !enumerated.element.idZone.isEmpty {
+                    values.append(.keyValue("Zone #\(enumerated.offset + 1)", .string(enumerated.element.idZone)))
+                }
+                
+                if !enumerated.element.idUser.isEmpty {
+                    values.append(.keyValue("User #\(enumerated.offset + 1)", .string(enumerated.element.idUser)))
+                }
+                return values
+            }
+            
+            if !ids.isEmpty {
+                extensionValues.append(.keyValue("IDs", .nested(ids)))
+            }
+        }
+        
+        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .nested(extensionValues))
     }
 }
 extension BraveCertificateProxyCertInfoExtensionModel {
-    func toKeyValuePairs() -> BraveCertificateSimplifiedExtensionModel {
-        var extensionValues = [
-            BraveCertificateExtensionKeyValueModel(key: "Critical", value: .boolean(isCritical)),
-            BraveCertificateExtensionKeyValueModel(key: "Path Length Constraint", value: .string("\(pathLengthConstraint)"))
+    override var simplifiedModel: BraveCertificateAnySimplifiedExtensionModel {
+        var extensionValues: [BraveCertificateExtensionKeyValueType] = [
+            .keyValue("Critical", .boolean(isCritical))
         ]
         
-        if let proxyPolicy = proxyPolicy {
-            extensionValues.append(BraveCertificateExtensionKeyValueModel(key: "Proxy Policy", value: .nested([
-                .keyValue("Language", .string(proxyPolicy.language)),
-                .keyValue("Policy Text", .string(proxyPolicy.policyText))
-            ])))
+        if pathLengthConstraint > 0 {
+            extensionValues.append(.keyValue("Path Length Constraint", .string("\(pathLengthConstraint)")))
         }
-        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .keyValue(extensionValues))
+        
+        if let proxyPolicy = proxyPolicy {
+            var policies = [BraveCertificateExtensionKeyValueType]()
+            if !proxyPolicy.language.isEmpty {
+                policies.append(.keyValue("Language", .string(proxyPolicy.language)))
+            }
+            
+            if !proxyPolicy.policyText.isEmpty {
+                policies.append(.keyValue("Policy Text", .string(proxyPolicy.policyText)))
+            }
+            
+            if !policies.isEmpty {  // Could always just show "None" or something but in any case, empty should be invalid.
+                extensionValues.append(.keyValue("Proxy Policy", .nested(policies)))
+            }
+        }
+        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .nested(extensionValues))
     }
 }
 
 // PKIX CRL Extensions
 extension BraveCertificateCRLNumberExtensionModel {
-    func toKeyValuePairs() -> BraveCertificateSimplifiedExtensionModel {
-        let extensionValues = [
-            BraveCertificateExtensionKeyValueModel(key: "Critical", value: .boolean(isCritical)),
-            BraveCertificateExtensionKeyValueModel(key: "CRL Number", value: .string(crlNumber))
+    override var simplifiedModel: BraveCertificateAnySimplifiedExtensionModel {
+        var extensionValues: [BraveCertificateExtensionKeyValueType] = [
+            .keyValue("Critical", .boolean(isCritical))
         ]
-        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .keyValue(extensionValues))
+        
+        if !crlNumber.isEmpty {
+            extensionValues.append(.keyValue("CRL Number", .string(crlNumber)))
+        }
+        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .nested(extensionValues))
     }
 }
 
 extension BraveCertificateCRLDistributionPointsExtensionModel {
-    func toKeyValuePairs() -> BraveCertificateSimplifiedExtensionModel {
-        var extensionValues = [
-            BraveCertificateExtensionKeyValueModel(key: "Critical", value: .boolean(isCritical))
+    override var simplifiedModel: BraveCertificateAnySimplifiedExtensionModel {
+        var extensionValues: [BraveCertificateExtensionKeyValueType] = [
+            .keyValue("Critical", .boolean(isCritical))
         ]
         
-        let flagMapping: [BraveCRLReasonFlags: String] = [
-            .INVALID: "Invalid",
-            .UNUSED: "Unused",
-            .KEY_COMPROMISED: "Key Compromised",
-            .CA_COMPROMISED: "CA Compromised",
-            .AFFILIATION_CHANGED: "Affiliate Changed",
-            .SUPERSEDED: "Superseded",
-            .CESSATION_OF_OPERATION: "Cessation of Operation",
-            .CERTIFICATE_HOLD: "Certificate Hold",
-            .PRIVILEGE_WITHDRAWN: "Privilege Withdrawn",
-            .AA_COMPROMISED: "AA Compromised"
-        ]
-        
-        let distPoints = distPoints.enumerated().map({ enumerated in
-            BraveCertificateExtensionKeyValueModel(key: "Point #\(enumerated.offset + 1)", value: .nested([
-                .keyValue("Names", .nested(enumerated.element.genDistPointName.map {
-                    BraveCertificateUtilities.generalNameToExtensionValueType($0)
-                })),
-                .keyValue("Relative Names", .nested(enumerated.element.relativeDistPointNames.map {
-                    .keyValue($0.key, .string($0.value))
-                })),
-                .keyValue("Reason Flags", .string(flagMapping.compactMap({
-                    enumerated.element.reasonFlags.contains($0.key) ? $0.value : nil
-                }).joined(separator: ", "))),
-                .keyValue("CRL Issuer", .nested(enumerated.element.crlIssuer.map {
-                    BraveCertificateUtilities.generalNameToExtensionValueType($0)
-                })),
-                .keyValue("DP Reason", .string("\(enumerated.element.dpReason)"))
-            ]))
-        })
-        
-        extensionValues.append(contentsOf: distPoints)
-        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .keyValue(extensionValues))
+        if !distPoints.isEmpty {
+            let flagMapping: [BraveCRLReasonFlags: String] = [
+                //.INVALID: "Invalid",
+                .UNUSED: "Unused",
+                .KEY_COMPROMISED: "Key Compromised",
+                .CA_COMPROMISED: "CA Compromised",
+                .AFFILIATION_CHANGED: "Affiliate Changed",
+                .SUPERSEDED: "Superseded",
+                .CESSATION_OF_OPERATION: "Cessation of Operation",
+                .CERTIFICATE_HOLD: "Certificate Hold",
+                .PRIVILEGE_WITHDRAWN: "Privilege Withdrawn",
+                .AA_COMPROMISED: "AA Compromised"
+            ]
+            
+            let distPoints: [[BraveCertificateExtensionKeyValueType]] = distPoints.compactMap({ element in
+                var points = [BraveCertificateExtensionKeyValueType]()
+                if !element.genDistPointName.isEmpty {
+                    points.append(.keyValue("Names", .nested(element.genDistPointName.map {
+                        BraveCertificateUtilities.generalNameToExtensionValueType($0)
+                    })))
+                }
+                
+                if !element.relativeDistPointNames.isEmpty {
+                    let names: [BraveCertificateExtensionKeyValueType] = element.relativeDistPointNames.compactMap {
+                        if !$0.key.isEmpty && !$0.value.isEmpty {
+                            return .keyValue($0.key, .string($0.value))
+                        }
+                        
+                        if !$0.key.isEmpty {
+                            return .string($0.value)
+                        }
+                        
+                        if !$0.value.isEmpty {
+                            return .string($0.key)
+                        }
+                        return nil
+                    }
+                    
+                    if !names.isEmpty {
+                        points.append(.keyValue("Relative Names", .nested(names)))
+                    }
+                }
+                
+                if !element.reasonFlags.isEmpty {
+                    let flags = flagMapping.compactMap({
+                        element.reasonFlags.contains($0.key) ? $0.value : nil
+                    }).joined(separator: ", ")
+                    
+                    if !flags.isEmpty {
+                        points.append(.keyValue("Reason Flags", .string(flags)))
+                    }
+                }
+                
+                if !element.crlIssuer.isEmpty {
+                    points.append(.keyValue("CRL Issuer", .nested(element.crlIssuer.map {
+                        BraveCertificateUtilities.generalNameToExtensionValueType($0)
+                    })))
+                }
+                
+                if element.dpReason > 0 {
+                    points.append(.keyValue("DP Reason", .string("\(element.dpReason)")))
+                }
+                
+                return points.isEmpty ? nil : points
+            })
+            
+            if distPoints.count == 1, let point = distPoints.first {
+                extensionValues.append(contentsOf: point)
+            } else {
+                for point in distPoints.enumerated() {
+                    extensionValues.append(.keyValue("Point #\(point.offset + 1)", .nested(point.element)))
+                }
+            }
+        }
+        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .nested(extensionValues))
     }
 }
 
 extension BraveCertificateDeltaCRLExtensionModel {
-    func toKeyValuePairs() -> BraveCertificateSimplifiedExtensionModel {
-        let extensionValues = [
-            BraveCertificateExtensionKeyValueModel(key: "Critical", value: .boolean(isCritical)),
-            BraveCertificateExtensionKeyValueModel(key: "CRL Number", value: .string(crlNumber))
+    override var simplifiedModel: BraveCertificateAnySimplifiedExtensionModel {
+        var extensionValues: [BraveCertificateExtensionKeyValueType] = [
+            .keyValue("Critical", .boolean(isCritical))
         ]
-        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .keyValue(extensionValues))
+        
+        if !crlNumber.isEmpty {
+            extensionValues.append(.keyValue("CRL Number", .string(crlNumber)))
+        }
+        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .nested(extensionValues))
     }
 }
 
 extension BraveCertificateInvalidityDateExtensionModel {
-    func toKeyValuePairs() -> BraveCertificateSimplifiedExtensionModel {
-        let extensionValues = [
-            BraveCertificateExtensionKeyValueModel(key: "Critical", value: .boolean(isCritical)),
-            BraveCertificateExtensionKeyValueModel(key: "Invalidity Date", value: .string(
-                                                    BraveCertificateUtilities.formatDate(invalidityDate)))
+    override var simplifiedModel: BraveCertificateAnySimplifiedExtensionModel {
+        let extensionValues: [BraveCertificateExtensionKeyValueType] = [
+            .keyValue("Critical", .boolean(isCritical)),
+            .keyValue("Invalidity Date",
+                      .string(BraveCertificateUtilities.formatDate(invalidityDate)))
         ]
-        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .keyValue(extensionValues))
+        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .nested(extensionValues))
     }
 }
 
 extension BraveCertificateIssuingDistributionPointExtensionModel {
-    func toKeyValuePairs() -> BraveCertificateSimplifiedExtensionModel {
+    override var simplifiedModel: BraveCertificateAnySimplifiedExtensionModel {
         let flagMapping: [BraveCRLReasonFlags: String] = [
-            .INVALID: "Invalid",
+            //.INVALID: "Invalid",
             .UNUSED: "Unused",
             .KEY_COMPROMISED: "Key Compromised",
             .CA_COMPROMISED: "CA Compromised",
@@ -602,31 +809,65 @@ extension BraveCertificateIssuingDistributionPointExtensionModel {
             .AA_COMPROMISED: "AA Compromised"
         ]
         
-        let extensionValues = [
-            BraveCertificateExtensionKeyValueModel(key: "Critical", value: .boolean(isCritical)),
-            BraveCertificateExtensionKeyValueModel(key: "Names", value: .nested(genDistPointName.map {
-                BraveCertificateUtilities.generalNameToExtensionValueType($0)
-            })),
-            BraveCertificateExtensionKeyValueModel(key: "Relative Names", value: .nested(relativeDistPointNames.map {
-                .keyValue($0.key, .string($0.value))
-            })),
-            BraveCertificateExtensionKeyValueModel(key: "Only User Certificates", value: .boolean(onlyUserCertificates)),
-            BraveCertificateExtensionKeyValueModel(key: "Only CA Certificates", value: .boolean(onlyCACertificates)),
-            BraveCertificateExtensionKeyValueModel(key: "Only Some Reasons", value: .string(
-                flagMapping.compactMap({ onlySomeReasons.contains($0.key) ? $0.value : nil }).joined(separator: ", ")
-            )),
-            BraveCertificateExtensionKeyValueModel(key: "Indirect CRL", value: .boolean(indirectCRL)),
-            BraveCertificateExtensionKeyValueModel(key: "Only Attributes", value: .boolean(onlyAttr)),
-            BraveCertificateExtensionKeyValueModel(key: "Only Attributes Validated", value: .boolean(onlyAttrValidated)),
+        var extensionValues: [BraveCertificateExtensionKeyValueType] = [
+            .keyValue("Critical", .boolean(isCritical))
         ]
         
-        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .keyValue(extensionValues))
+        if !genDistPointName.isEmpty {
+            extensionValues.append(.keyValue("Names", .nested(genDistPointName.map {
+                BraveCertificateUtilities.generalNameToExtensionValueType($0)
+            })))
+        }
+        
+        if !relativeDistPointNames.isEmpty {
+            let names: [BraveCertificateExtensionKeyValueType] = relativeDistPointNames.compactMap {
+                if !$0.key.isEmpty && !$0.value.isEmpty {
+                    return .keyValue($0.key, .string($0.value))
+                }
+                
+                if !$0.key.isEmpty {
+                    return .string($0.value)
+                }
+                
+                if !$0.value.isEmpty {
+                    return .string($0.key)
+                }
+                return nil
+            }
+            
+            if !names.isEmpty {
+                extensionValues.append(.keyValue("Relative Names", .nested(names)))
+            }
+        }
+        
+        extensionValues.append(contentsOf: [
+            .keyValue("Only User Certificates", .boolean(onlyUserCertificates)),
+            .keyValue("Only CA Certificates", .boolean(onlyCACertificates)),
+        ])
+        
+        if !onlySomeReasons.isEmpty {
+            let reasons = flagMapping.compactMap({
+                onlySomeReasons.contains($0.key) ? $0.value : nil
+            }).joined(separator: ", ")
+            
+            if !reasons.isEmpty {
+                extensionValues.append(.keyValue("Only Some Reasons", .string(reasons)))
+            }
+        }
+        
+        extensionValues.append(contentsOf: [
+            .keyValue("Indirect CRL", .boolean(indirectCRL)),
+            .keyValue("Only Attributes", .boolean(onlyAttr)),
+            .keyValue("Only Attributes Validated", .boolean(onlyAttrValidated))
+        ])
+        
+        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .nested(extensionValues))
     }
 }
 
 // CRL entry extensions from PKIX standards such as RFC5280
 extension BraveCertificateCRLReasonExtensionModel {
-    func toKeyValuePairs() -> BraveCertificateSimplifiedExtensionModel {
+    override var simplifiedModel: BraveCertificateAnySimplifiedExtensionModel {
         let mapping: [BraveCRLReasonCode: String] = [
             .NONE: "None",
             .UNSPECIFIED: "Unspecified",
@@ -641,75 +882,93 @@ extension BraveCertificateCRLReasonExtensionModel {
             .AA_COMPROMISED: "AA Compromised"
         ]
         
-        let extensionValues = [
-            BraveCertificateExtensionKeyValueModel(key: "Critical", value: .boolean(isCritical)),
-            BraveCertificateExtensionKeyValueModel(key: "Reason Code", value: .string(mapping[reason] ?? "None"))
+        var extensionValues: [BraveCertificateExtensionKeyValueType] = [
+            .keyValue("Critical", .boolean(isCritical))
         ]
         
-        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .keyValue(extensionValues))
+        if reason != .NONE, let reasonCode = mapping[reason] {
+            extensionValues.append(.keyValue("Reason Code", .string(reasonCode)))
+        }
+        
+        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .nested(extensionValues))
     }
 }
 
 extension BraveCertificateIssuerExtensionModel {
-    func toKeyValuePairs() -> BraveCertificateSimplifiedExtensionModel {
-        var extensionValues = [
-            BraveCertificateExtensionKeyValueModel(key: "Critical", value: .boolean(isCritical))
+    override var simplifiedModel: BraveCertificateAnySimplifiedExtensionModel {
+        var extensionValues: [BraveCertificateExtensionKeyValueType] = [
+            .keyValue("Critical", .boolean(isCritical))
         ]
         
-        let names = names.enumerated().map({
-            BraveCertificateExtensionKeyValueModel(key: "Name #\($0.offset + 1)", value: BraveCertificateUtilities.generalNameToExtensionValueType($0.element))
-        })
+        if !names.isEmpty {
+            extensionValues.append(contentsOf: names.map {
+                BraveCertificateUtilities.generalNameToExtensionValueType($0)
+            })
+        }
         
-        extensionValues.append(contentsOf: names)
-        
-        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .keyValue(extensionValues))
+        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .nested(extensionValues))
     }
 }
-
     
 // OCSP Extensions
 extension BraveCertificatePKIXOCSPNonceExtensionModel {
-    func toKeyValuePairs() -> BraveCertificateSimplifiedExtensionModel {
-        let extensionValues = [
-            BraveCertificateExtensionKeyValueModel(key: "Critical", value: .boolean(isCritical)),
-            BraveCertificateExtensionKeyValueModel(key: "Nonce", value: .string(nonce))
+    override var simplifiedModel: BraveCertificateAnySimplifiedExtensionModel {
+        var extensionValues: [BraveCertificateExtensionKeyValueType] = [
+            .keyValue("Critical", .boolean(isCritical))
         ]
-        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .keyValue(extensionValues))
+        
+        if !nonce.isEmpty {
+            extensionValues.append(.keyValue("Nonce", .string(nonce)))
+        }
+        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .nested(extensionValues))
     }
 }
 
 extension BraveCertificateSCTExtensionModel {
-    func toKeyValuePairs() -> BraveCertificateSimplifiedExtensionModel {
-        var extensionValues = [
-            BraveCertificateExtensionKeyValueModel(key: "Critical", value: .boolean(isCritical)),
-            BraveCertificateExtensionKeyValueModel(key: "Nonce", value: .string("nonce"))
+    override var simplifiedModel: BraveCertificateAnySimplifiedExtensionModel {
+        var extensionValues: [BraveCertificateExtensionKeyValueType] = [
+            .keyValue("Critical", .boolean(isCritical))
         ]
         
-        let scts = scts.enumerated().map({ enumerated -> BraveCertificateExtensionKeyValueModel in
+        let scts = scts.enumerated().map({ enumerated -> BraveCertificateExtensionKeyValueType in
             if let hexRepresentation = enumerated.element.hexRepresentation {
-                return BraveCertificateExtensionKeyValueModel(key: "SCT #\(enumerated.offset + 1)", value: .string(
+                return .keyValue("SCT #\(enumerated.offset + 1)", .string(
                     BraveCertificateUtilities.formatHex(hexRepresentation)
                 ))
             } else {
-                return BraveCertificateExtensionKeyValueModel(key: "SCT #\(enumerated.offset + 1)", value: .nested([
+                var sctInfo: [BraveCertificateExtensionKeyValueType] = [
                     .keyValue("Version", .string("\(enumerated.element.version + 1)")),
                     .keyValue("Log Entry Type", .string("\(enumerated.element.logEntryType)")),
-                    .keyValue("Log ID", .string(BraveCertificateUtilities.formatHex(enumerated.element.logId))),
-                    .keyValue("Timestamp", .string(BraveCertificateUtilities.formatDate(enumerated.element.timestamp))),
-                    .keyValue("Extensions", .string(enumerated.element.extensions)),
-                    .keyValue("Signature Algorithm", .string(enumerated.element.signatureName)),  // Maybe add NID too?
-                    .keyValue("Signature", .string("\(enumerated.element.signature.count / 2) bytes : \(BraveCertificateUtilities.formatHex(enumerated.element.signature))"))
-                ]))
+                ]
+                
+                if !enumerated.element.logId.isEmpty {
+                    sctInfo.append(.keyValue("Log ID", .string(BraveCertificateUtilities.formatHex(enumerated.element.logId))))
+                }
+                
+                sctInfo.append(.keyValue("Timestamp", .string(BraveCertificateUtilities.formatDate(enumerated.element.timestamp))))
+                if !enumerated.element.extensions.isEmpty {
+                    sctInfo.append(.keyValue("Extensions", .string(enumerated.element.extensions)))
+                }
+                
+                if !enumerated.element.signatureName.isEmpty {
+                    sctInfo.append(.keyValue("Signature Algorithm", .string(enumerated.element.signatureName)))  // Maybe add NID too?
+                }
+                
+                if !enumerated.element.signature.isEmpty {
+                    sctInfo.append(.keyValue("Signature", .string("\(enumerated.element.signature.count / 2) bytes : \(BraveCertificateUtilities.formatHex(enumerated.element.signature))")))
+                }
+                
+                return .keyValue("SCT #\(enumerated.offset + 1)", .nested(sctInfo))
             }
         })
         
         extensionValues.append(contentsOf: scts)
-        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .keyValue(extensionValues))
+        return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .nested(extensionValues))
     }
 }
 
 extension BraveCertificateGenericExtensionModel {
-    func toKeyValuePairs() -> BraveCertificateSimplifiedExtensionModel {
+    override var simplifiedModel: BraveCertificateAnySimplifiedExtensionModel {
         return BraveCertificateSimplifiedExtensionModel(genericModel: self)
     }
 }

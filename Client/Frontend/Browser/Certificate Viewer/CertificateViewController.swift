@@ -74,9 +74,14 @@ struct CertificateTitleView: View {
     }
 }
 
-struct CertificateTitleValueView: View, Hashable {
+struct CertificateKeyValueView: View, Hashable {
     let title: String
-    let value: String
+    let value: String?
+    
+    init(title: String, value: String? = nil) {
+        self.title = title
+        self.value = value
+    }
     
     var body: some View {
         HStack(alignment: .center, spacing: 12.0) {
@@ -84,10 +89,13 @@ struct CertificateTitleValueView: View, Hashable {
                 .font(.system(size: 12.0))
                 .foregroundColor(.black)
             Spacer(minLength: 20.0)
-            Text(value)
-                .lineLimit(nil)
-                .font(.system(size: 12.0, weight: .medium))
-                .foregroundColor(.black)
+            if let value = value, !value.isEmpty {
+                Text(value)
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .font(.system(size: 12.0, weight: .medium))
+                    .foregroundColor(.black)
+            }
         }
     }
 }
@@ -138,15 +146,15 @@ struct CertificateView: View {
                     CertificateSectionView(title: "Common Info",
                                            values: [
                       // Serial number
-                      CertificateTitleValueView(title: "Serial Number",
+                      CertificateKeyValueView(title: "Serial Number",
                                                 value: formattedSerialNumber()),
                                             
                       // Version
-                      CertificateTitleValueView(title: "Version",
+                      CertificateKeyValueView(title: "Version",
                                                 value: "\(model.value.version)"),
                                             
                       // Signature Algorithm
-                      CertificateTitleValueView(title: "Signature Algorithm",
+                      CertificateKeyValueView(title: "Signature Algorithm",
                                                 value: "\(model.value.signature.algorithm) (\(model.value.signature.objectIdentifier))"),
                       //signatureParametersView().padding(.leading, 18.0)
                     ])
@@ -155,12 +163,12 @@ struct CertificateView: View {
                     CertificateSectionView(title: "Validity Dates",
                                            values: [
                       // Not Valid Before
-                      CertificateTitleValueView(title: "Not Valid Before",
-                                                value: formatDate(model.value.notValidBefore)),
+                      CertificateKeyValueView(title: "Not Valid Before",
+                                                value: BraveCertificateUtilities.formatDate(model.value.notValidBefore)),
                     
                       // Not Valid After
-                      CertificateTitleValueView(title: "Not Valid After",
-                                                value: formatDate(model.value.notValidAfter))
+                      CertificateKeyValueView(title: "Not Valid After",
+                                                value: BraveCertificateUtilities.formatDate(model.value.notValidAfter))
                     ])
                     
                     // Public Key Info
@@ -170,7 +178,7 @@ struct CertificateView: View {
                     // Signature
                     CertificateSectionView(title: "Signature",
                                            values: [
-                      CertificateTitleValueView(title: "Signature",
+                      CertificateKeyValueView(title: "Signature",
                                                 value: formattedSignature())
                     ])
                     
@@ -193,7 +201,7 @@ struct CertificateView: View {
 }
 
 extension CertificateView {
-    private func subjectNameViews() -> [CertificateTitleValueView] {
+    private func subjectNameViews() -> [CertificateKeyValueView] {
         let subjectName = model.value.subjectName
         
         // Ordered mapping
@@ -210,12 +218,12 @@ extension CertificateView {
         ]
         
         return mapping.compactMap({
-            $0.value.isEmpty ? nil : CertificateTitleValueView(title: $0.key,
+            $0.value.isEmpty ? nil : CertificateKeyValueView(title: $0.key,
                                                                value: $0.value)
         })
     }
     
-    private func issuerNameViews() -> [CertificateTitleValueView] {
+    private func issuerNameViews() -> [CertificateKeyValueView] {
         let issuerName = model.value.issuerName
         
         // Ordered mapping
@@ -232,7 +240,7 @@ extension CertificateView {
         ]
         
         return mapping.compactMap({
-            $0.value.isEmpty ? nil : CertificateTitleValueView(title: $0.key,
+            $0.value.isEmpty ? nil : CertificateKeyValueView(title: $0.key,
                                                                value: $0.value)
         })
     }
@@ -242,17 +250,17 @@ extension CertificateView {
         if Int64(serialNumber) != nil || UInt64(serialNumber) != nil {
             return "\(serialNumber)"
         }
-        return formatHex(model.value.serialNumber)
+        return BraveCertificateUtilities.formatHex(model.value.serialNumber)
     }
     
-    private func signatureParametersView() -> CertificateTitleValueView {
+    private func signatureParametersView() -> CertificateKeyValueView {
         let signature = model.value.signature
-        let parameters = signature.parameters.isEmpty ? "None" : formatHex(signature.parameters)
-        return CertificateTitleValueView(title: "Parameters",
+        let parameters = signature.parameters.isEmpty ? "None" : BraveCertificateUtilities.formatHex(signature.parameters)
+        return CertificateKeyValueView(title: "Parameters",
                                          value: parameters)
     }
     
-    private func publicKeyInfoViews() -> [CertificateTitleValueView] {
+    private func publicKeyInfoViews() -> [CertificateKeyValueView] {
         let publicKeyInfo = model.value.publicKeyInfo
         
         var algorithm = publicKeyInfo.algorithm
@@ -264,10 +272,10 @@ extension CertificateView {
             algorithm += " (\(publicKeyInfo.objectIdentifier))"
         }
         
-        let parameters = publicKeyInfo.parameters.isEmpty ? "None" : "\(publicKeyInfo.parameters.count / 2) bytes : \(formatHex(publicKeyInfo.parameters))"
+        let parameters = publicKeyInfo.parameters.isEmpty ? "None" : "\(publicKeyInfo.parameters.count / 2) bytes : \(BraveCertificateUtilities.formatHex(publicKeyInfo.parameters))"
         
         // TODO: Number Formatter
-        let publicKey = "\(publicKeyInfo.keyBytesSize) bytes : \(formatHex(publicKeyInfo.keyHexEncoded))"
+        let publicKey = "\(publicKeyInfo.keyBytesSize) bytes : \(BraveCertificateUtilities.formatHex(publicKeyInfo.keyHexEncoded))"
         
         // TODO: Number Formatter
         let keySizeInBits = "\(publicKeyInfo.keySizeInBits) bits"
@@ -311,352 +319,61 @@ extension CertificateView {
         ]
         
         return mapping.compactMap({
-            $0.value.isEmpty ? nil : CertificateTitleValueView(title: $0.key,
+            $0.value.isEmpty ? nil : CertificateKeyValueView(title: $0.key,
                                                                value: $0.value)
         })
     }
     
     private func formattedSignature() -> String {
         let signature = model.value.signature
-        return "\(signature.bytesSize) bytes : \(formatHex(signature.signatureHexEncoded))"
+        return "\(signature.bytesSize) bytes : \(BraveCertificateUtilities.formatHex(signature.signatureHexEncoded))"
     }
     
-    private func extensionViews() -> [CertificateSectionView<CertificateTitleValueView>] {
+    private func extensionViews() -> [AnyView] {
         let extensions = model.value.extensions
         
-        var result = [CertificateSectionView<CertificateTitleValueView>]()
+        var result = [AnyView]()
         for certExtension in extensions {
-            if certExtension.nid <= 0 { // NID_undef
-                let view = CertificateSectionView(title: "Extension Unknown (\(certExtension.onid))", values: [
-                    
-                    CertificateTitleValueView(title: "Critical", value: certExtension.isCritical ? "YES" : "NO")
-                ])
+            if let view = extensionView(certExtension: certExtension) {
                 result.append(view)
-            } else {
-                
             }
         }
         return result
     }
     
-    private func extensionView(from extensionType: BraveExtensionType,
-                               certExtension: BraveCertificateExtensionModel) -> AnyView? {
-        switch extensionType {
-        case .UNKNOWN:
-            guard let model = certExtension as? BraveCertificateGenericExtensionModel else {
-                return nil
-            }
-
-            break
-            
-        // PKIX Certificate Extensions
-        case .BASIC_CONSTRAINTS:
-            guard let model = certExtension as? BraveCertificateBasicConstraintsExtensionModel else {
-                return nil
-            }
-
-            break
-        case .KEY_USAGE:
-            guard let model = certExtension as? BraveCertificateKeyUsageExtensionModel else {
-                return nil
-            }
-
-            break
-        case .EXT_KEY_USAGE:
-            guard let model = certExtension as? BraveCertificateExtendedKeyUsageExtensionModel else {
-                return nil
-            }
-
-            break
-        case .SUBJECT_KEY_IDENTIFIER:
-            guard let model = certExtension as? Any else {
-                return nil
-            }
-
-            break
-        case .AUTHORITY_KEY_IDENTIFIER:
-            guard let model = certExtension as? Any else {
-                return nil
-            }
-
-            break
-        case .PRIVATE_KEY_USAGE_PERIOD:
-            guard let model = certExtension as? Any else {
-                return nil
-            }
-
-            break
-        case .SUBJECT_ALT_NAME:
-            guard let model = certExtension as? Any else {
-                return nil
-            }
-
-            break
-        case .ISSUER_ALT_NAME:
-            guard let model = certExtension as? Any else {
-                return nil
-            }
-
-            break
-        case .INFO_ACCESS:
-            guard let model = certExtension as? Any else {
-                return nil
-            }
-
-            break
-        case .SINFO_ACCESS:
-            guard let model = certExtension as? Any else {
-                return nil
-            }
-
-            break
-        case .NAME_CONSTRAINTS:
-            guard let model = certExtension as? Any else {
-                return nil
-            }
-
-            break
-        case .CERTIFICATE_POLICIES:
-            guard let model = certExtension as? Any else {
-                return nil
-            }
-
-            break
-        case .POLICY_MAPPINGS:
-            guard let model = certExtension as? Any else {
-                return nil
-            }
-
-            break
-        case .POLICY_CONSTRAINTS:
-            guard let model = certExtension as? Any else {
-                return nil
-            }
-
-            break
-        case .INHIBIT_ANY_POLICY:
-            guard let model = certExtension as? Any else {
-                return nil
-            }
-
-            break
-        case .TLSFEATURE:
-            guard let model = certExtension as? Any else {
-                return nil
-            }
-
-            break
-
-        // Netscape Certificate Extensions - Largely Obsolete
-        case .NETSCAPE_CERT_TYPE:
-            guard let model = certExtension as? Any else {
-                return nil
-            }
-
-            break
-        case .NETSCAPE_BASE_URL:
-            guard let model = certExtension as? Any else {
-                return nil
-            }
-
-            break
-        case .NETSCAPE_REVOCATION_URL:
-            guard let model = certExtension as? Any else {
-                return nil
-            }
-
-            break
-        case .NETSCAPE_CA_REVOCATION_URL:
-            guard let model = certExtension as? Any else {
-                return nil
-            }
-
-            break
-        case .NETSCAPE_RENEWAL_URL:
-            guard let model = certExtension as? Any else {
-                return nil
-            }
-
-            break
-        case .NETSCAPE_CA_POLICY_URL:
-            guard let model = certExtension as? Any else {
-                return nil
-            }
-
-            break
-        case .NETSCAPE_SSL_SERVER_NAME:
-            guard let model = certExtension as? Any else {
-                return nil
-            }
-
-            break
-        case .NETSCAPE_COMMENT:
-            guard let model = certExtension as? Any else {
-                return nil
-            }
-
-            break
-
-        // Miscellaneous Certificate Extensions
-        case .SXNET:
-            guard let model = certExtension as? Any else {
-                return nil
-            }
-
-            break
-        case .PROXYCERTINFO:
-            guard let model = certExtension as? Any else {
-                return nil
-            }
-
-            break
-
-        // PKIX CRL Extensions
-        case .CRL_NUMBER:
-            guard let model = certExtension as? Any else {
-                return nil
-            }
-
-            break
-        case .CRL_DISTRIBUTION_POINTS:
-            guard let model = certExtension as? Any else {
-                return nil
-            }
-
-            break
-        case .DELTA_CRL:
-            guard let model = certExtension as? Any else {
-                return nil
-            }
-
-            break
-        case .FRESHEST_CRL:
-            guard let model = certExtension as? Any else {
-                return nil
-            }
-
-            break
-        case .INVALIDITY_DATE:
-            guard let model = certExtension as? Any else {
-                return nil
-            }
-
-            break
-        case .ISSUING_DISTRIBUTION_POINT:
-            guard let model = certExtension as? Any else {
-                return nil
-            }
-
-            break
-
-        // CRL entry extensions from PKIX standards such as RFC5280
-        case .CRL_REASON:
-            guard let model = certExtension as? Any else {
-                return nil
-            }
-
-            break
-        case .CERTIFICATE_ISSUER:
-            guard let model = certExtension as? Any else {
-                return nil
-            }
-
-            break
-
-        // OCSP Extensions
-        case .ID_PKIX_OCSP_NONCE:
-            guard let model = certExtension as? Any else {
-                return nil
-            }
-
-            break
-        case .ID_PKIX_OCSP_CRLID:
-            guard let model = certExtension as? Any else {
-                return nil
-            }
-
-            break
-        case .ID_PKIX_OCSP_ACCEPTABLERESPONSES:
-            guard let model = certExtension as? Any else {
-                return nil
-            }
-
-            break
-        case .ID_PKIX_OCSP_NOCHECK:
-            guard let model = certExtension as? Any else {
-                return nil
-            }
-
-            break
-        case .ID_PKIX_OCSP_ARCHIVECUTOFF:
-             guard let model = certExtension as? Any else {
-                return nil
-            }
-
-            break
-        case .ID_PKIX_OCSP_SERVICELOCATOR:
-            guard let model = certExtension as? Any else {
-                return nil
-            }
-
-            break
-        case .HOLD_INSTRUCTION_CODE:
-            guard let model = certExtension as? Any else {
-                return nil
-            }
-
-            break
-
-        // Certificate Transparency Extensions
-        case .CT_PRECERT_SCTS:
-            guard let model = certExtension as? Any else {
-                return nil
-            }
-
-            break
-        case .CT_CERT_SCTS:
-            guard let model = certExtension as? Any else {
-                return nil
-            }
-
-            break
-            
-        @unknown default:
-            fatalError()
+    private func extensionView(certExtension: BraveCertificateExtensionModel) -> AnyView? {
+        guard let extensionModel = certExtension.simplifiedModel as? BraveCertificateSimplifiedExtensionModel else {
+            return nil
         }
-        return nil
+        
+        return AnyView(Group {
+            if certExtension.nid <= 0 {
+                Text("Unknown Extension (\(certExtension.onid))")
+                    .font(.system(size: 12.0))
+                    .foregroundColor(Color(#colorLiteral(red: 0.4988772273, green: 0.4988895059, blue: 0.4988829494, alpha: 1)))
+            } else {
+                Text(certExtension.title)
+                    .font(.system(size: 12.0))
+                    .foregroundColor(Color(#colorLiteral(red: 0.4988772273, green: 0.4988895059, blue: 0.4988829494, alpha: 1)))
+            }
+            VStack(alignment: .leading, spacing: 0.0) {
+                RecursiveNestedKeyValueView(model: extensionModel.extensionInfo)
+                    .padding(EdgeInsets(top: 10.0,
+                                          leading: 0.0,
+                                          bottom: 10.0,
+                                          trailing: 10.0))
+            }.padding(.leading, 10).background(Color(#colorLiteral(red: 0.9725490196, green: 0.9764705882, blue: 0.9843137255, alpha: 1))).cornerRadius(5.0)
+        })
     }
     
-    private func fingerprintViews() -> [CertificateTitleValueView] {
+    private func fingerprintViews() -> [CertificateKeyValueView] {
         let sha256Fingerprint = model.value.sha256Fingerprint
         let sha1Fingerprint = model.value.sha1Fingerprint
         
         return [
-            CertificateTitleValueView(title: "SHA-256", value: formatHex(sha256Fingerprint.fingerprintHexEncoded)),
-            CertificateTitleValueView(title: "SHA-1", value: formatHex(sha1Fingerprint.fingerprintHexEncoded))
+            CertificateKeyValueView(title: "SHA-256", value: BraveCertificateUtilities.formatHex(sha256Fingerprint.fingerprintHexEncoded)),
+            CertificateKeyValueView(title: "SHA-1", value: BraveCertificateUtilities.formatHex(sha1Fingerprint.fingerprintHexEncoded))
         ]
-    }
-    
-    private func formatHex(_ hexString: String, separator: String = " ") -> String {
-        let n = 2
-        let characters = Array(hexString)
-        
-        var result: String = ""
-        stride(from: 0, to: characters.count, by: n).forEach {
-            result += String(characters[$0..<min($0 + n, characters.count)])
-            if $0 + n < characters.count {
-                result += separator
-            }
-        }
-        return result
-    }
-    
-    private func formatDate(_ date: Date) -> String {
-        let dateFormatter = DateFormatter().then {
-            $0.dateStyle = .full
-            $0.timeStyle = .full
-        }
-        return dateFormatter.string(from: date)
     }
     
     private struct KeyValue {
