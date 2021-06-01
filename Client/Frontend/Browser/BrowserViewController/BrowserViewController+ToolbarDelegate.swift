@@ -49,7 +49,7 @@ extension BrowserViewController: TopToolbarDelegate {
            let certificate = BraveCertificate(certificate: serverCertificate) {
             let certificateViewController = CertificateViewController(certificate: certificate)
             
-            let popover = PopoverController(contentController: certificateViewController, contentSizeBehavior: .autoLayout)
+            let popover = PopoverController(contentController: certificateViewController, contentSizeBehavior: .preferredContentSize)
             popover.addsConvenientDismissalMargins = false
             popover.present(from: self.topToolbar.locationView.lockImageView, on: self)
         }

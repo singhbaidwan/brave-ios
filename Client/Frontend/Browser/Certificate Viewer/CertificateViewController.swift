@@ -70,7 +70,7 @@ struct CertificateTitleView: View {
                 Text(commonName)
                     .font(.system(size: 16.0, weight: .bold))
             }
-        }
+        }.background(Color(UIColor.secondaryBraveGroupedBackground))
     }
 }
 
@@ -87,14 +87,12 @@ struct CertificateKeyValueView: View, Hashable {
         HStack(alignment: .center, spacing: 12.0) {
             Text(title)
                 .font(.system(size: 12.0))
-                .foregroundColor(.black)
-            Spacer(minLength: 20.0)
+            Spacer()
             if let value = value, !value.isEmpty {
                 Text(value)
                     .lineLimit(nil)
                     .fixedSize(horizontal: false, vertical: true)
                     .font(.system(size: 12.0, weight: .medium))
-                    .foregroundColor(.black)
             }
         }
     }
@@ -105,22 +103,13 @@ struct CertificateSectionView<ContentView>: View where ContentView: View {
     let values: [ContentView]
     
     var body: some View {
-        Text(title)
-            .font(.system(size: 12.0))
-            .foregroundColor(Color(#colorLiteral(red: 0.4988772273, green: 0.4988895059, blue: 0.4988829494, alpha: 1)))
-        
-        VStack(alignment: .leading, spacing: 0.0) {
+        Section(header: Text(title)
+                    .font(.system(size: 12.0))) {
+            
             ForEach(values.indices, id: \.self) {
-                values[$0].padding(EdgeInsets(top: 10.0,
-                                      leading: 0.0,
-                                      bottom: 10.0,
-                                      trailing: 10.0))
-                
-                if $0 != values.count - 1 {
-                    Divider()
-                }
+                values[$0].listRowBackground(Color(UIColor.secondaryBraveGroupedBackground))
             }
-        }.padding(.leading, 10).background(Color(#colorLiteral(red: 0.9725490196, green: 0.9764705882, blue: 0.9843137255, alpha: 1))).cornerRadius(5.0)
+        }
     }
 }
 
@@ -128,75 +117,87 @@ struct CertificateView: View {
     @EnvironmentObject var model: BraveCertificate
     
     var body: some View {
-        ScrollView(.vertical, showsIndicators: true) {
-            VStack(alignment: .leading, spacing: 5.0) {
-                CertificateTitleView(isRootCertificate:
-                                        model.value.isRootCertificate,
-                                     commonName: model.value.subjectName.commonName)
-                Spacer(minLength: 20.0)
-                VStack(alignment: .leading, spacing: 10.0) {
-                    // Subject name
-                    CertificateSectionView(title: "Subject Name", values: subjectNameViews())
-                    
-                    // Issuer name
-                    CertificateSectionView(title: "Issuer Name",
-                                           values: issuerNameViews())
-                    
-                    // Common info
-                    CertificateSectionView(title: "Common Info",
-                                           values: [
-                      // Serial number
-                      CertificateKeyValueView(title: "Serial Number",
-                                                value: formattedSerialNumber()),
-                                            
-                      // Version
-                      CertificateKeyValueView(title: "Version",
-                                                value: "\(model.value.version)"),
-                                            
-                      // Signature Algorithm
-                      CertificateKeyValueView(title: "Signature Algorithm",
-                                                value: "\(model.value.signature.algorithm) (\(model.value.signature.objectIdentifier))"),
-                      //signatureParametersView().padding(.leading, 18.0)
-                    ])
-                    
-                    // Validity info
-                    CertificateSectionView(title: "Validity Dates",
-                                           values: [
-                      // Not Valid Before
-                      CertificateKeyValueView(title: "Not Valid Before",
-                                                value: BraveCertificateUtilities.formatDate(model.value.notValidBefore)),
-                    
-                      // Not Valid After
-                      CertificateKeyValueView(title: "Not Valid After",
-                                                value: BraveCertificateUtilities.formatDate(model.value.notValidAfter))
-                    ])
-                    
-                    // Public Key Info
-                    CertificateSectionView(title: "Public Key info",
-                                           values: publicKeyInfoViews())
-                    
-                    // Signature
-                    CertificateSectionView(title: "Signature",
-                                           values: [
-                      CertificateKeyValueView(title: "Signature",
-                                                value: formattedSignature())
-                    ])
-                    
-                    // Fingerprints
-                    CertificateSectionView(title: "Fingerprints",
-                                           values: fingerprintViews())
+        VStack {
+            CertificateTitleView(isRootCertificate:
+                                    model.value.isRootCertificate,
+                                 commonName: model.value.subjectName.commonName).padding()
+            
+            if #available(iOS 14, *) {
+                List {
+                    content
                 }
-                Spacer(minLength: 10.0)
-                VStack(alignment: .leading, spacing: 10.0) {
-                    ForEach(extensionViews().indices, id: \.self) {
-                        extensionViews()[$0]
-                    }
+                .listStyle(InsetGroupedListStyle())
+                .frame(maxHeight: .infinity)
+                .environmentObject(model)
+            } else {
+                List {
+                    content
                 }
-            }.padding()
-            .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .topLeading)
+                .listStyle(GroupedListStyle())
+                .frame(maxHeight: .infinity)
+                .environmentObject(model)
+            }
         }
-        .frame(maxHeight: .infinity)
-        .environmentObject(model)
+    }
+    
+    @ViewBuilder
+    private var content: some View {
+        // Subject name
+        CertificateSectionView(title: "Subject Name", values: subjectNameViews())
+        
+        // Issuer name
+        CertificateSectionView(title: "Issuer Name",
+                               values: issuerNameViews())
+        
+        // Common info
+        CertificateSectionView(title: "Common Info",
+                               values: [
+          // Serial number
+          CertificateKeyValueView(title: "Serial Number",
+                                    value: formattedSerialNumber()),
+                                
+          // Version
+          CertificateKeyValueView(title: "Version",
+                                    value: "\(model.value.version)"),
+                                
+          // Signature Algorithm
+          CertificateKeyValueView(title: "Signature Algorithm",
+                                    value: "\(model.value.signature.algorithm) (\(model.value.signature.objectIdentifier))"),
+          //signatureParametersView().padding(.leading, 18.0)
+        ])
+        
+        // Validity info
+        CertificateSectionView(title: "Validity Dates",
+                               values: [
+          // Not Valid Before
+          CertificateKeyValueView(title: "Not Valid Before",
+                                    value: BraveCertificateUtilities.formatDate(model.value.notValidBefore)),
+        
+          // Not Valid After
+          CertificateKeyValueView(title: "Not Valid After",
+                                    value: BraveCertificateUtilities.formatDate(model.value.notValidAfter))
+        ])
+        
+        // Public Key Info
+        CertificateSectionView(title: "Public Key info",
+                               values: publicKeyInfoViews())
+        
+        // Signature
+        CertificateSectionView(title: "Signature",
+                               values: [
+          CertificateKeyValueView(title: "Signature",
+                                    value: formattedSignature())
+        ])
+        
+        // Fingerprints
+        CertificateSectionView(title: "Fingerprints",
+                               values: fingerprintViews())
+        
+        /*Section {
+            ForEach(extensionViews().indices, id: \.self) {
+                extensionViews()[$0]
+            }
+        }*/
     }
 }
 
@@ -407,6 +408,8 @@ class CertificateViewController: UIViewController, PopoverContentComponent {
         controller.view.snp.makeConstraints {
             $0.edges.equalToSuperview()
         }
+        
+        self.preferredContentSize = CGSize(width: UIScreen.main.bounds.width, height: 1000)
     }
     
     required init?(coder: NSCoder) {

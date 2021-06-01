@@ -70,7 +70,14 @@ struct BraveCertificateUtilities {
     }
 }
 
-indirect enum BraveCertificateExtensionKeyValueType {
+
+struct Value {
+    let key: String
+    let value: String?
+    let children: [Value]
+}
+
+indirect enum BraveCertificateExtensionKeyValueType: Hashable {
     case string(String)
     case boolean(Bool)
     case hexString(String)
@@ -167,12 +174,12 @@ struct RecursiveNestedKeyValueView: View {
             return AnyView(CertificateKeyValueView(title: value))
         case .keyValue(let key, let value):
             if case .keyValue = value {
-                return AnyView(VStack(alignment: .leading, spacing: 0.0) {
+                return AnyView(Section {
                     CertificateKeyValueView(title: key)
                     construct(model: value).padding(.leading, 20.0)
                 })
             } else if case .nested = value {
-                return AnyView(VStack(alignment: .leading, spacing: 0.0) {
+                return AnyView(Section {
                     CertificateKeyValueView(title: key)
                     construct(model: value).padding(.leading, 20.0)
                 })
@@ -190,13 +197,9 @@ struct RecursiveNestedKeyValueView: View {
             }
         case .nested(let values):
             return AnyView(
-                VStack {
-                    ForEach(values.indices) {
-                        construct(model: values[$0])
-                        
-                        if $0 < values.count - 1 {
-                            Divider()
-                        }
+                Section {
+                    ForEach(values, id: \.self) {
+                        construct(model: $0)
                     }
                 }
             )
@@ -252,10 +255,10 @@ extension BraveCertificateExtendedKeyUsageExtensionModel {
     override var simplifiedModel: BraveCertificateAnySimplifiedExtensionModel {
         let extensionValues: [BraveCertificateExtensionKeyValueType] = [
             .keyValue("Critical", .boolean(isCritical))
-        ] + keyPurposes.enumerated().map({
+        ]/* + keyPurposes.enumerated().map({
             .keyValue("Purpose #\($0.offset + 1)",
                       .string("\($0.element.name) (\($0.element.nidString)"))
-        })
+        })*/
         
         return BraveCertificateSimplifiedExtensionModel(genericModel: self, extensionInfo: .nested(extensionValues))
     }
