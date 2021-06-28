@@ -841,7 +841,8 @@
 		CA439A7625E8054A00FE9150 /* VideoPlayerControlsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA439A7525E8054A00FE9150 /* VideoPlayerControlsView.swift */; };
 		CA439A9025E80EE400FE9150 /* VideoPlayerTrackbar.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA439A8F25E80EE400FE9150 /* VideoPlayerTrackbar.swift */; };
 		CA4A141D267D0BAC00C47AF4 /* PlaylistCarplayController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA4A141C267D0BAC00C47AF4 /* PlaylistCarplayController.swift */; };
-		CA4A142A267D0C8100C47AF4 /* PlaylistControlCenterManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA4A1429267D0C8100C47AF4 /* PlaylistControlCenterManager.swift */; };
+		CA4A142A267D0C8100C47AF4 /* MPRemoteCommandCenter+Combine.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA4A1429267D0C8100C47AF4 /* MPRemoteCommandCenter+Combine.swift */; };
+		CA4A14682680BCBC00C47AF4 /* MediaPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA4A14672680BCBC00C47AF4 /* MediaPlayer.swift */; };
 		CA98ADE52652ACB1006F505C /* PlaylistCarplayManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA98ADE42652ACB1006F505C /* PlaylistCarplayManager.swift */; };
 		CAA10597266FE94700A0372D /* RecentSearchQRCodeScannerController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAA1058B266FE94700A0372D /* RecentSearchQRCodeScannerController.swift */; };
 		CAB127632639F37C00BBFC75 /* RecentSearches.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAB127622639F37C00BBFC75 /* RecentSearches.swift */; };
@@ -2478,7 +2479,8 @@
 		CA439A7525E8054A00FE9150 /* VideoPlayerControlsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoPlayerControlsView.swift; sourceTree = "<group>"; };
 		CA439A8F25E80EE400FE9150 /* VideoPlayerTrackbar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoPlayerTrackbar.swift; sourceTree = "<group>"; };
 		CA4A141C267D0BAC00C47AF4 /* PlaylistCarplayController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaylistCarplayController.swift; sourceTree = "<group>"; };
-		CA4A1429267D0C8100C47AF4 /* PlaylistControlCenterManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaylistControlCenterManager.swift; sourceTree = "<group>"; };
+		CA4A1429267D0C8100C47AF4 /* MPRemoteCommandCenter+Combine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MPRemoteCommandCenter+Combine.swift"; sourceTree = "<group>"; };
+		CA4A14672680BCBC00C47AF4 /* MediaPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaPlayer.swift; sourceTree = "<group>"; };
 		CA98ADE42652ACB1006F505C /* PlaylistCarplayManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaylistCarplayManager.swift; sourceTree = "<group>"; };
 		CAA1058B266FE94700A0372D /* RecentSearchQRCodeScannerController.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = RecentSearchQRCodeScannerController.swift; sourceTree = "<group>"; };
 		CAB127622639F37C00BBFC75 /* RecentSearches.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecentSearches.swift; sourceTree = "<group>"; };
@@ -4642,12 +4644,9 @@
 		5E5E6E4425BA04120035B6A0 /* VideoPlayer */ = {
 			isa = PBXGroup;
 			children = (
-				CA439A5825E6F29D00FE9150 /* VideoPlayerInfoBar.swift */,
-				CA439A8F25E80EE400FE9150 /* VideoPlayerTrackbar.swift */,
-				CA439A7525E8054A00FE9150 /* VideoPlayerControlsView.swift */,
-				5E5E6E6D25BA04AB0035B6A0 /* VideoPlayer.swift */,
-				5E5E6E4525BA041E0035B6A0 /* PlaylistParticleEmitter.swift */,
-				5E5E6E6225BA04730035B6A0 /* DataURIParser.swift */,
+				CA4A146926820A3700C47AF4 /* Extensions */,
+				CA4A145B2680BC8B00C47AF4 /* UI */,
+				CA4A14672680BCBC00C47AF4 /* MediaPlayer.swift */,
 			);
 			path = VideoPlayer;
 			sourceTree = "<group>";
@@ -4658,7 +4657,6 @@
 				5E99C88A25C83BE3003F30B4 /* PlaylistManager.swift */,
 				5E5E6E7925BA156F0035B6A0 /* PlaylistCacheLoader.swift */,
 				5E99CDEF25DD8C81003F30B4 /* PlaylistDownloadManager.swift */,
-				CA4A1429267D0C8100C47AF4 /* PlaylistControlCenterManager.swift */,
 			);
 			path = "Managers & Cache";
 			sourceTree = "<group>";
@@ -4818,10 +4816,31 @@
 		CA2358A3267109B500696CE1 /* Utilities */ = {
 			isa = PBXGroup;
 			children = (
+				5E5E6E6225BA04730035B6A0 /* DataURIParser.swift */,
 				5E5E6F1425BA8DD70035B6A0 /* PlaylistMediaInfo.swift */,
 				CA2358A926710C4300696CE1 /* PlaylistThumbnailUtility.swift */,
 			);
 			path = Utilities;
+			sourceTree = "<group>";
+		};
+		CA4A145B2680BC8B00C47AF4 /* UI */ = {
+			isa = PBXGroup;
+			children = (
+				CA439A5825E6F29D00FE9150 /* VideoPlayerInfoBar.swift */,
+				CA439A8F25E80EE400FE9150 /* VideoPlayerTrackbar.swift */,
+				CA439A7525E8054A00FE9150 /* VideoPlayerControlsView.swift */,
+				5E5E6E6D25BA04AB0035B6A0 /* VideoPlayer.swift */,
+				5E5E6E4525BA041E0035B6A0 /* PlaylistParticleEmitter.swift */,
+			);
+			path = UI;
+			sourceTree = "<group>";
+		};
+		CA4A146926820A3700C47AF4 /* Extensions */ = {
+			isa = PBXGroup;
+			children = (
+				CA4A1429267D0C8100C47AF4 /* MPRemoteCommandCenter+Combine.swift */,
+			);
+			path = Extensions;
 			sourceTree = "<group>";
 		};
 		CAB127612639D02100BBFC75 /* Recent Search */ = {
@@ -6902,6 +6921,7 @@
 				278C467B23EDF0940083347F /* ShieldsSwitch.swift in Sources */,
 				27829E212548AFFE007CF0B2 /* BraveRewardsPublisherView.swift in Sources */,
 				31ADB5DA1E58CEC300E87909 /* ClipboardBarDisplayHandler.swift in Sources */,
+				CA4A14682680BCBC00C47AF4 /* MediaPlayer.swift in Sources */,
 				5E9B28F7255048540072E655 /* BookmarkFetchers.swift in Sources */,
 				5E5E6E6325BA04730035B6A0 /* DataURIParser.swift in Sources */,
 				0A4B012020D02EC4004D4011 /* TabsBarViewController.swift in Sources */,
@@ -7308,7 +7328,7 @@
 				5E99D01525E56BFB003F30B4 /* PlaylistManager.swift in Sources */,
 				E68E7ADA1CAC207400FDCA76 /* ChangePasscodeViewController.swift in Sources */,
 				5E1645A824ABA35B0003C3B2 /* SpinnerView.swift in Sources */,
-				CA4A142A267D0C8100C47AF4 /* PlaylistControlCenterManager.swift in Sources */,
+				CA4A142A267D0C8100C47AF4 /* MPRemoteCommandCenter+Combine.swift in Sources */,
 				E640E85E1C73A45A00C5F072 /* PasscodeEntryViewController.swift in Sources */,
 				274398E224E4827800E79605 /* FeedCard.swift in Sources */,
 				4422D4BF21BFFB7600BF1855 /* logging.cc in Sources */,

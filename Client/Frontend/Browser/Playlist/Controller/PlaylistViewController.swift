@@ -30,6 +30,8 @@ class PlaylistViewController: UIViewController, PlaylistViewControllerDelegate {
     
     // MARK: Properties
 
+    private let player = MediaPlayer()
+    private let playerView = VideoView()
     private let splitController = UISplitViewController()
     private let listController = PlaylistListViewController()
     private let detailController = PlaylistDetailViewController()
@@ -39,6 +41,7 @@ class PlaylistViewController: UIViewController, PlaylistViewControllerDelegate {
         
         overrideUserInterfaceStyle = .dark
         listController.delegate = self
+        observePlayerStates()
         
         splitController.do {
             $0.viewControllers = [SettingsNavigationController(rootViewController: listController),
@@ -63,7 +66,7 @@ class PlaylistViewController: UIViewController, PlaylistViewControllerDelegate {
         
         updateLayoutForOrientationChange()
         
-        detailController.setVideoPlayer(listController.playerView)
+        detailController.setVideoPlayer(playerView)
         detailController.navigationController?.setNavigationBarHidden(splitController.isCollapsed || traitCollection.horizontalSizeClass == .regular, animated: false)
         
         if UIDevice.isPhone {
@@ -96,7 +99,7 @@ class PlaylistViewController: UIViewController, PlaylistViewControllerDelegate {
     }
     
     private func updateLayoutForOrientationChange() {
-        if listController.playerView.isFullscreen {
+        if playerView.isFullscreen {
             splitController.preferredDisplayMode = .secondaryOnly
         } else {
             if UIDevice.current.orientation.isLandscape {
@@ -107,16 +110,44 @@ class PlaylistViewController: UIViewController, PlaylistViewControllerDelegate {
         }
     }
     
-    func onSidePanelStateChanged() {
-        detailController.onSidePanelStateChanged()
-    }
-    
-    func onFullscreen() {
-        detailController.onFullScreen()
-    }
-    
-    func onExitFullscreen() {
-        detailController.onExitFullScreen()
+    private func observePlayerStates() {
+        player.publisher(for: .finishedPlaying).sink { [weak self] event in
+            guard let self = self, let currentItem = event.mediaPlayer.currentItem else { return }
+            
+            self.playerView.controlsView.playPauseButton.isEnabled = false
+            self.playerView.controlsView.playPauseButton.setImage(#imageLiteral(resourceName: "playlist_pause"), for: .normal)
+            event.mediaPlayer.pause()
+            
+            let endTime = CMTimeConvertScale(currentItem.asset.duration, timescale: event.mediaPlayer.currentTime.timescale, method: .roundHalfAwayFromZero)
+            
+            self.playerView.controlsView.trackBar.setTimeRange(currentTime: currentItem.currentTime(), endTime: endTime)
+            self.player.seek(to: .zero)
+            
+            self.playerView.controlsView.playPauseButton.isEnabled = true
+            self.playerView.controlsView.playPauseButton.setImage(#imageLiteral(resourceName: "playlist_play"), for: .normal)
+
+            self.playerView.toggleOverlays(showOverlay: true)
+            self.onNextTrack(isUserInitiated: false)
+        }
+        
+        player.publisher(for: .periodicPlayTimeChanged).sink { [weak self] event in
+            guard let self = self, let currentItem = event.mediaPlayer.currentItem else { return }
+            
+            let endTime = CMTimeConvertScale(currentItem.asset.duration, timescale: event.mediaPlayer.currentTime.timescale, method: .roundHalfAwayFromZero)
+            
+            if CMTimeCompare(endTime, .zero) != 0 && endTime.value > 0 {
+                self.playerView.controlsView.trackBar.setTimeRange(currentTime: event.mediaPlayer.currentTime, endTime: endTime)
+            }
+        }
+        
+        self.playerView.infoView.pictureInPictureButton.isEnabled =
+            AVPictureInPictureController.isPictureInPictureSupported()
+        player.publisher(for: .pictureInPictureStatusChanged).sink { [weak self] event in
+            guard let self = self else { return }
+            
+            self.playerView.infoView.pictureInPictureButton.isEnabled =
+                event.mediaPlayer.pictureInPictureController?.isPictureInPicturePossible == true
+        }
     }
 }
 
@@ -150,7 +181,7 @@ extension PlaylistViewController: UISplitViewControllerDelegate {
         // On iPhone, always display the iPad layout (expanded) when not in compact mode.
         // On iPad, we need to update both the list controller's layout (expanded) and the detail controller's layout (expanded).
         listController.updateLayoutForMode(.pad)
-        detailController.setVideoPlayer(listController.playerView)
+        detailController.setVideoPlayer(playerView)
         detailController.updateLayoutForMode(.pad)
         
         if UIDevice.isPhone {
@@ -158,6 +189,135 @@ extension PlaylistViewController: UISplitViewControllerDelegate {
         }
         
         return detailController.navigationController ?? detailController
+    }
+}
+
+extension PlaylistViewController: VideoViewDelegate {
+    func onPreviousTrack(isUserInitiated: Bool) {
+        
+    }
+    
+    func onNextTrack(isUserInitiated: Bool) {
+        
+    }
+    
+    func onSidePanelStateChanged() {
+        detailController.onSidePanelStateChanged()
+    }
+    
+    func onPictureInPicture() {
+        guard let pictureInPictureController = player.pictureInPictureController else { return }
+  
+        DispatchQueue.main.async {
+            if pictureInPictureController.isPictureInPictureActive {
+                self.onPictureInPicture(enabled: false)
+                pictureInPictureController.stopPictureInPicture()
+            } else {
+                if #available(iOS 14.0, *) {
+                    pictureInPictureController.requiresLinearPlayback = false
+                }
+
+                self.onPictureInPicture(enabled: true)
+                pictureInPictureController.startPictureInPicture()
+            }
+        }
+    }
+    
+    func onFullscreen() {
+        detailController.onFullScreen()
+    }
+    
+    func onExitFullscreen() {
+        detailController.onExitFullScreen()
+    }
+    
+    func play() {
+        player.play()
+    }
+    
+    func pause() {
+        player.pause()
+    }
+    
+    func stop() {
+        player.stop()
+    }
+    
+    func seekBackwards() {
+        player.seekBackwards()
+    }
+    
+    func seekForwards() {
+        player.seekForwards()
+    }
+    
+    func seek(to time: TimeInterval) {
+        player.seek(to: time)
+    }
+    
+    func seek(relativeOffset: Float) {
+        if let currentItem = player.currentItem {
+            let seekTime = CMTimeMakeWithSeconds(Float64(CGFloat(relativeOffset) * CGFloat(currentItem.asset.duration.value) / CGFloat(currentItem.asset.duration.timescale)), preferredTimescale: currentItem.currentTime().timescale)
+            seek(to: seekTime.seconds)
+        }
+    }
+    
+    func setPlaybackRate(rate: Float) {
+        player.setPlaybackRate(rate: rate)
+    }
+    
+    func togglePlayerGravity() {
+        player.toggleGravity()
+    }
+    
+    func toggleRepeatMode() {
+        player.toggleRepeatMode()
+    }
+    
+    var isPlaying: Bool {
+        player.isPlaying
+    }
+    
+    var repeatMode: MediaPlayer.RepeatMode {
+        player.repeatState
+    }
+    
+    public func load(url: URL, autoPlayEnabled: Bool) {
+        load(asset: AVURLAsset(url: url), autoPlayEnabled: autoPlayEnabled)
+    }
+    
+    public func load(asset: AVURLAsset, autoPlayEnabled: Bool) {
+        player.load(asset: asset)
+        .receive(on: RunLoop.main)
+        .sink(receiveCompletion: { error in
+            if case .failure(let error) = error {
+                print(error)
+            }
+        }, receiveValue: { [weak self] isNewItem in
+            guard let self = self, let item = self.player.currentItem else { return }
+            
+            // We are playing the same item again..
+            if !isNewItem {
+                self.pause()
+                self.seek(relativeOffset: 0.0) // Restart playback
+                self.play()
+                return
+            }
+            
+            // Live media item
+            let isPlayingLiveMedia = self.player.isLiveMedia
+            self.playerView.controlsView.trackBar.isUserInteractionEnabled = !isPlayingLiveMedia
+            self.playerView.controlsView.skipBackButton.isEnabled = !isPlayingLiveMedia
+            self.playerView.controlsView.skipForwardButton.isEnabled = !isPlayingLiveMedia
+            
+            // Track-bar
+            let endTime = CMTimeConvertScale(item.asset.duration, timescale: self.player.currentTime.timescale, method: .roundHalfAwayFromZero)
+            self.playerView.controlsView.trackBar.setTimeRange(currentTime: item.currentTime(), endTime: endTime)
+            
+            if autoPlayEnabled {
+                self.play() // Play the new item
+            }
+        })
     }
 }
 

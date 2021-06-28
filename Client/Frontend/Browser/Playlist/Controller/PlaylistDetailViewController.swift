@@ -89,7 +89,7 @@ class PlaylistDetailViewController: UIViewController, UIGestureRecognizerDelegat
     func handleGesture(gesture: UISwipeGestureRecognizer) {
         guard gesture.direction == .right,
               let playerView = playerView,
-              !playerView.checkInsideTrackBar(point: gesture.location(in: view)) else {
+              !playerView.controlsView.trackBar.frame.contains(gesture.location(in: view)) else {
             return
         }
         

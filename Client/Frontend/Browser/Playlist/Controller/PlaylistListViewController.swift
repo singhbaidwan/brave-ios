@@ -32,7 +32,7 @@ class PlaylistListViewController: UIViewController {
     // MARK: Properties
     
     weak var delegate: PlaylistViewControllerDelegate?
-    let playerView = VideoView()
+    private weak var playerView: VideoView?
     private let contentManager = MPPlayableContentManager.shared()
     private(set) lazy var mediaInfo = PlaylistMediaInfo(playerView: playerView)
     var currentlyPlayingItemIndex = -1

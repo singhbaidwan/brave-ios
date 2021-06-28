@@ -10,6 +10,12 @@ import Combine
 class PlaylistControlCenterManager: NSObject {
     private weak var playerView: VideoView?
     private var commandObservers = Set<AnyCancellable>()
+    private var rateObserver: NSKeyValueObservation?
+    public var nowPlayingInfo: PlaylistInfo? {
+        didSet {
+            updateNowPlayingMediaInfo()
+        }
+    }
     
     init(playerView: VideoView) {
         self.playerView = playerView
@@ -17,74 +23,40 @@ class PlaylistControlCenterManager: NSObject {
     }
     
     private func addCommandObservers() {
-        let center = MPRemoteCommandCenter.shared()
-        center.publisher(for: .pauseCommand).sink { [weak self] _ in
-            self?.playerView?.pause()
-        }.store(in: &commandObservers)
-        
-        center.publisher(for: .playCommand).sink { [weak self] _ in
-            self?.playerView?.play()
-        }.store(in: &commandObservers)
-        
-        center.publisher(for: .stopCommand).sink { [weak self] _ in
-            self?.playerView?.stop()
-        }.store(in: &commandObservers)
-        
-        center.publisher(for: .changeRepeatModeCommand).sink { [weak self] _ in
-            //self?.playerView?.repeatState = .repeatOne
-        }.store(in: &commandObservers)
-        
-        center.publisher(for: .changeShuffleModeCommand).sink { [weak self] _ in
-            
-        }.store(in: &commandObservers)
-        
-        center.publisher(for: .previousTrackCommand).sink { [weak self] _ in
-            self?.playerView?.previous()
-        }.store(in: &commandObservers)
-        
-        center.publisher(for: .nextTrackCommand).sink { [weak self] _ in
-            self?.playerView?.next()
-        }.store(in: &commandObservers)
-        
-        center.skipBackwardCommand.preferredIntervals = [NSNumber(value: 15.0)]
-        center.publisher(for: .skipBackwardCommand).sink { [weak self] event in
-            guard let self = self,
-                  let playerView = self.playerView,
-                  let event = event as? MPSkipIntervalCommandEvent else { return }
-            
-            let currentTime = playerView.player.currentTime()
-            playerView.seekBackwards()
-            MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPNowPlayingInfoPropertyElapsedPlaybackTime] = Double(currentTime.seconds - event.interval)
-        }.store(in: &commandObservers)
-        
-        center.skipForwardCommand.preferredIntervals = [NSNumber(value: 15.0)]
-        center.publisher(for: .skipForwardCommand).sink { [weak self] event in
-            guard let self = self,
-                  let playerView = self.playerView,
-                  let event = event as? MPSkipIntervalCommandEvent else { return }
-            
-            let currentTime = playerView.player.currentTime()
-            playerView.seekForwards()
-            MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPNowPlayingInfoPropertyElapsedPlaybackTime] = Double(currentTime.seconds + event.interval)
-        }.store(in: &commandObservers)
-        
-        center.publisher(for: .changePlaybackPositionCommand).sink { [weak self] event in
-            if let event = event as? MPChangePlaybackPositionCommandEvent {
-                self?.playerView?.seek(to: event.positionTime)
-            }
-        }.store(in: &commandObservers)
-        
-        UIApplication.shared.beginReceivingRemoteControlEvents()
-//        updateNowPlayingMediaInfo()
-//        rateObserver = playerView.player.observe(\AVPlayer.rate, changeHandler: { [weak self] _, _ in
-//            self?.updateNowPlayingMediaInfo()
-//        })
+        updateNowPlayingMediaInfo()
+        rateObserver = playerView?.player.observe(\AVPlayer.rate, changeHandler: { [weak self] _, _ in
+            self?.updateNowPlayingMediaInfo()
+        })
     }
     
     deinit {
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
-        //self.webLoader?.removeFromSuperview()
-        UIApplication.shared.endReceivingRemoteControlEvents()
+    }
+    
+    func updateNowPlayingMediaInfo() {
+        if let nowPlayingItem = self.nowPlayingInfo {
+            MPNowPlayingInfoCenter.default().nowPlayingInfo = [
+                MPNowPlayingInfoPropertyMediaType: "Audio",
+                MPMediaItemPropertyTitle: nowPlayingItem.name,
+                MPMediaItemPropertyArtist: URL(string: nowPlayingItem.pageSrc)?.baseDomain ?? nowPlayingItem.pageSrc,
+                MPMediaItemPropertyPlaybackDuration: TimeInterval(nowPlayingItem.duration),
+                MPNowPlayingInfoPropertyPlaybackRate: Double(self.playerView?.player.rate ?? 1.0),
+                MPNowPlayingInfoPropertyPlaybackProgress: Float(0.0),
+                MPNowPlayingInfoPropertyElapsedPlaybackTime: Double(self.playerView?.player.currentTime().seconds ?? 0.0)
+            ]
+        } else {
+            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        }
+    }
+    
+    func updateNowPlayingMediaArtwork(image: UIImage?) {
+        if let image = image {
+            MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size, requestHandler: { _ -> UIImage in
+                // Do not resize image here.
+                // According to Apple it isn't necessary to use expensive resize operations
+                return image
+            })
+        }
     }
 }
 
