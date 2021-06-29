@@ -512,14 +512,6 @@ class VideoView: UIView, VideoTrackerBarDelegate {
     func next() {
         self.delegate?.onNextTrack(isUserInitiated: false)
     }
-    
-    func load(url: URL, autoPlayEnabled: Bool) {
-        load(asset: AVURLAsset(url: url), autoPlayEnabled: autoPlayEnabled)
-    }
-    
-    func load(asset: AVURLAsset, autoPlayEnabled: Bool) {
-        
-    }
 }
 
 extension VideoView: UIGestureRecognizerDelegate {

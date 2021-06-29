@@ -27,71 +27,6 @@ class PlaylistMediaInfo: NSObject {
         self.playerView = playerView
         super.init()
         
-        MPRemoteCommandCenter.shared().pauseCommand.addTarget { [weak self] _ in
-            self?.playerView?.pause()
-            return .success
-        }
-        
-        MPRemoteCommandCenter.shared().playCommand.addTarget { [weak self] _ in
-            self?.playerView?.play()
-            return .success
-        }
-        
-        MPRemoteCommandCenter.shared().stopCommand.addTarget { [weak self] _ in
-            self?.playerView?.stop()
-            return .success
-        }
-        
-        MPRemoteCommandCenter.shared().changeRepeatModeCommand.addTarget { _ in
-            .success
-        }
-        
-        MPRemoteCommandCenter.shared().changeShuffleModeCommand.addTarget { _ in
-            .success
-        }
-        
-        MPRemoteCommandCenter.shared().previousTrackCommand.addTarget { [weak self] _ in
-            self?.playerView?.previous()
-            return .success
-        }
-        
-        MPRemoteCommandCenter.shared().nextTrackCommand.addTarget { [weak self] _ in
-            self?.playerView?.next()
-            return .success
-        }
-        
-        MPRemoteCommandCenter.shared().skipBackwardCommand.then {
-            $0.preferredIntervals = [NSNumber(value: 15.0)]
-        }.addTarget { [weak self] event in
-            guard let self = self,
-                  let playerView = self.playerView,
-                  let event = event as? MPSkipIntervalCommandEvent else { return .commandFailed }
-            
-            let currentTime = playerView.player.currentTime()
-            playerView.seekBackwards()
-            MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPNowPlayingInfoPropertyElapsedPlaybackTime] = Double(currentTime.seconds - event.interval)
-            return .success
-        }
-        
-        MPRemoteCommandCenter.shared().skipForwardCommand.then {
-            $0.preferredIntervals = [NSNumber(value: 15.0)]
-        }.addTarget { [weak self] event in
-            guard let self = self,
-                  let playerView = self.playerView,
-                  let event = event as? MPSkipIntervalCommandEvent else { return .commandFailed }
-            
-            let currentTime = playerView.player.currentTime()
-            playerView.seekForwards()
-            MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPNowPlayingInfoPropertyElapsedPlaybackTime] = Double(currentTime.seconds + event.interval)
-            return .success
-        }
-        
-        MPRemoteCommandCenter.shared().changePlaybackPositionCommand.addTarget { [weak self] event in
-            if let event = event as? MPChangePlaybackPositionCommandEvent {
-                self?.playerView?.seek(to: event.positionTime)
-            }
-            return .success
-        }
         
         UIApplication.shared.beginReceivingRemoteControlEvents()
         updateNowPlayingMediaInfo()
@@ -242,27 +177,6 @@ extension PlaylistMediaInfo: MPPlayableContentDelegate {
     }
 }
 
-extension PlaylistMediaInfo {
-    
-    func thumbnailForURL(_ url: String) -> UIImage? {
-        guard let sourceURL = URL(string: url) else {
-            return nil
-        }
-        
-        let asset = AVAsset(url: sourceURL)
-        let imageGenerator = AVAssetImageGenerator(asset: asset)
-        let time = CMTimeMakeWithSeconds(2, preferredTimescale: 1)
-        
-        do {
-            let imageRef = try imageGenerator.copyCGImage(at: time, actualTime: nil)
-            return UIImage(cgImage: imageRef)
-        } catch {
-            log.error("Error copying thumbnail for playlist url: \(url) -  \(error)")
-        }
-        return nil
-    }
-}
-
 class PlaylistPlayerStatusObserver: NSObject {
     private var context = 0
     private weak var player: AVPlayer?
@@ -304,176 +218,19 @@ class PlaylistPlayerStatusObserver: NSObject {
     }
 }
 
-// A resource manager/downloader that is capable of handling HLS streams and content requests
-// This is used to determine if a resource is streamable (HLS) and to be able to request chunks of that stream.
-class MediaResourceManager: NSObject, AVAssetResourceLoaderDelegate {
-    
-    private var completion: ((Error?) -> Void)?
-    private var dataRequests = [AVAssetResourceLoadingRequest]()
-    private var contentInfoRequest: AVAssetResourceLoadingRequest?
-    private lazy var session = URLSession(configuration: .ephemeral, delegate: nil, delegateQueue: .main)
-    private var data = Data()
-    
-    init(_ completion: @escaping (Error?) -> Void) {
-        self.completion = completion
-    }
-    
-    func resourceLoader(_ resourceLoader: AVAssetResourceLoader, shouldWaitForLoadingOfRequestedResource loadingRequest: AVAssetResourceLoadingRequest) -> Bool {
-        // Load the content information..
-        if let contentRequest = loadingRequest.contentInformationRequest {
-            guard let requestURL = loadingRequest.request.url else { return false }
-            guard MediaResourceManager.isShimmedURL(requestURL) else { return false }
-            let originalURL = MediaResourceManager.unShimURL(requestURL)
-            
-            // Request for byte-ranges..
-            let request: URLRequest = {
-                let offset = loadingRequest.dataRequest?.currentOffset ?? 0
-                let length = loadingRequest.dataRequest?.requestedLength ?? 0
-                
-                var request = loadingRequest.request
-                request.url = originalURL
-                request.addValue("bytes=\(offset)-\(max(1, length - 1))", forHTTPHeaderField: "Range")
-                return request
-            }()
-            
-            self.session.dataTask(with: request) { [weak self] data, response, error in
-                guard let self = self else { return }
-                guard let response = response as? HTTPURLResponse else {
-                    self.completion?("Invalid Response")
-                    return
-                }
-                
-                if response.statusCode == 200 {
-                    contentRequest.contentType = response.mimeType
-                    contentRequest.contentLength = response.expectedContentLength
-                    contentRequest.isByteRangeAccessSupported = response.expectedContentLength != -1
-                    
-                    if let rangeString = response.allHeaderFields["Content-Range"] as? String,
-                        let contentLength = rangeString.split(separator: "/").compactMap({ Int64($0) }).last {
-                        contentRequest.contentLength = contentLength
-                    }
-                    
-                    let acceptedRanges = (response.allHeaderFields["Accept-Ranges"] as? String)?.split(separator: ",")
-                    if acceptedRanges?.map({ String($0).trim(" ") }).contains("bytes") == true {
-                        contentRequest.isByteRangeAccessSupported = true
-                    } else {
-                        contentRequest.isByteRangeAccessSupported = false
-                    }
-                } else {
-                    self.completion?("Invalid Response")
-                    self.completion = nil
-                    return
-                }
-                
-                loadingRequest.finishLoading()
-            }.resume()
-            contentInfoRequest = loadingRequest
-            return true
-        }
-        
-        if let dataRequest = loadingRequest.dataRequest {
-            guard let requestURL = loadingRequest.request.url else { return false }
-            guard MediaResourceManager.isShimmedURL(requestURL) else { return false }
-            let originalURL = MediaResourceManager.unShimURL(requestURL)
-            
-            // Request for byte-ranges..
-            let request: URLRequest = {
-                let offset = dataRequest.currentOffset
-                let length = dataRequest.requestedLength
-                
-                var request = URLRequest(url: originalURL)
-                request.cachePolicy = .reloadIgnoringLocalCacheData
-                request.addValue("bytes=\(offset)-\(max(1, length - 1))", forHTTPHeaderField: "Range")
-                return request
-            }()
-            
-            // Should use URLSessionDataDelegate to stream instead of downloading all chunks at once..
-            self.session.dataTask(with: request) { [weak self] data, response, error in
-                guard let self = self else { return }
-                
-                if let data = data {
-                    self.data.append(data)
-                }
-                
-                self.processPendingRequests()
-                
-            }.resume()
-            
-            dataRequests.append(loadingRequest)
-            return true
-        }
-        
-        return false
-    }
-    
-    func resourceLoader(_ resourceLoader: AVAssetResourceLoader, shouldWaitForRenewalOfRequestedResource renewalRequest: AVAssetResourceRenewalRequest) -> Bool {
-        false
-    }
-    
-    func resourceLoader(_ resourceLoader: AVAssetResourceLoader, didCancel loadingRequest: AVAssetResourceLoadingRequest) {
-        if contentInfoRequest == loadingRequest {
-            contentInfoRequest = nil
-            return
-        }
-        
-        dataRequests.removeAll(where: { loadingRequest == $0 })
-    }
-    
-    func processPendingRequests() {
-        let requestsFulfilled = Set<AVAssetResourceLoadingRequest>(self.dataRequests.compactMap {
-            $0.contentInformationRequest?.contentLength = Int64(self.data.count)
-            $0.contentInformationRequest?.isByteRangeAccessSupported = true
-            
-            if self.haveEnoughDataToFulfillRequest($0.dataRequest!) {
-                $0.finishLoading()
-                return $0
-            }
-            return nil
-        })
-        
-        self.dataRequests.removeAll(where: { requestsFulfilled.contains($0) })
-    }
-    
-    func haveEnoughDataToFulfillRequest(_ dataRequest: AVAssetResourceLoadingDataRequest) -> Bool {
-        let requestedOffset = Int(dataRequest.requestedOffset)
-        let currentOffset = Int(dataRequest.currentOffset)
-        let requestedLength = dataRequest.requestedLength
-        
-        if currentOffset <= self.data.count {
-            let bytesToRespond = min(self.data.count - currentOffset, requestedLength)
-            let data = self.data.subdata(in: Range(uncheckedBounds: (currentOffset, currentOffset + bytesToRespond)))
-            dataRequest.respond(with: data)
-            return self.data.count >= requestedLength + requestedOffset
-        }
-        
-        return false
-    }
-}
-
 extension MediaResourceManager {
-    static func shimURL(_ url: URL) -> URL {
-        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-        guard let scheme = components?.scheme else { return url }
-        components?.scheme = "brave-media-resource" + scheme
-        return components?.url ?? url
-    }
-    
-    static func unShimURL(_ url: URL) -> URL {
-        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-        guard let scheme = components?.scheme else { return url }
-        components?.scheme = scheme.replacingOccurrences(of: "brave-media-resource", with: "")
-        return components?.url ?? url
-    }
-    
-    static func isShimmedURL(_ url: URL) -> Bool {
-        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-        guard let scheme = components?.scheme else { return false }
-        return scheme.hasPrefix("brave-media-resource")
-    }
     
     // Would be nice if AVPlayer could detect the mime-type from the URL for my delegate without a head request..
     // This function only exists because I can't figure out why videos from URLs don't play unless I explicitly specify a mime-type..
     static func canStreamURL(_ url: URL, _ completion: @escaping (Bool) -> Void) {
+        switch Reach().connectionStatus() {
+        case .offline, .unknown:
+            completion(false)
+            return
+        case .online:
+            break
+        }
+        
         getMimeType(url) { mimeType in
             if let mimeType = mimeType {
                 completion(!mimeType.isEmpty)

@@ -90,7 +90,7 @@ class MediaPlayer: NSObject {
         UIApplication.shared.endReceivingRemoteControlEvents()
     }
     
-    func load(url: URL) -> Combine.Deferred<AnyPublisher<Void, Error>> {
+    func load(url: URL) -> Combine.Deferred<AnyPublisher<Bool, Error>> {
         load(asset: AVURLAsset(url: url))
     }
     
