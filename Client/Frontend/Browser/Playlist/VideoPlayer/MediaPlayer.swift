@@ -93,6 +93,11 @@ class MediaPlayer: NSObject {
         load(asset: AVURLAsset(url: url))
     }
     
+    /// On success, returns a publisher with a Boolean.
+    /// The boolean indicates if a NEW player item was loaded, OR if an existing item was loaded.
+    /// If an existing item is loaded, you should seek to offset zero to restart playback.
+    /// If a new item is loaded, you should call play to begin playback.
+    /// Returns an error on failure.
     func load(asset: AVURLAsset) -> Combine.Deferred<AnyPublisher<Bool, Error>> {
         return Deferred { [weak self] in
             guard let self = self else {
@@ -100,42 +105,41 @@ class MediaPlayer: NSObject {
                         .eraseToAnyPublisher()
             }
             
-            let subscriber = PassthroughSubject<Bool, Error>()
-            
-            // If the same asset is being loaded again.
-            // Just play it.
-            if let currentItem = self.player.currentItem, currentItem.asset.isKind(of: AVURLAsset.self) && self.player.status == .readyToPlay {
-                if let currentAsset = currentItem.asset as? AVURLAsset, currentAsset.url.absoluteString == asset.url.absoluteString {
-                    subscriber.send(false) // Same item is playing.
-                    self.pendingMediaItem = nil
-                    return subscriber.eraseToAnyPublisher()
-                }
-            }
-
-            let assetKeys = ["playable", "tracks", "duration"]
-            self.pendingMediaItem = AVPlayerItem(asset: asset)
-            asset.loadValuesAsynchronously(forKeys: assetKeys) { [weak self] in
-                guard let self = self, let item = self.pendingMediaItem else { return }
-                
-                for key in assetKeys {
-                    var error: NSError?
-                    let status = item.asset.statusOfValue(forKey: key, error: &error)
-                    if let error = error {
-                        subscriber.send(completion: .failure(error))
-                        return
-                    } else if status != .loaded {
-                        subscriber.send(completion: .failure("Cannot Load Asset Status: \(status)"))
+            return Future { resolver in
+                // If the same asset is being loaded again.
+                // Just play it.
+                if let currentItem = self.player.currentItem, currentItem.asset.isKind(of: AVURLAsset.self) && self.player.status == .readyToPlay {
+                    if let currentAsset = currentItem.asset as? AVURLAsset, currentAsset.url.absoluteString == asset.url.absoluteString {
+                        resolver(.success(false)) // Same item is playing.
+                        self.pendingMediaItem = nil
                         return
                     }
                 }
-                
-                DispatchQueue.main.async {
-                    self.player.replaceCurrentItem(with: item)
-                    self.pendingMediaItem = nil
-                    subscriber.send(true) // New Item loaded
+
+                let assetKeys = ["playable", "tracks", "duration"]
+                self.pendingMediaItem = AVPlayerItem(asset: asset)
+                asset.loadValuesAsynchronously(forKeys: assetKeys) { [weak self] in
+                    guard let self = self, let item = self.pendingMediaItem else { return }
+                    
+                    for key in assetKeys {
+                        var error: NSError?
+                        let status = item.asset.statusOfValue(forKey: key, error: &error)
+                        if let error = error {
+                            resolver(.failure(error))
+                            return
+                        } else if status != .loaded {
+                            resolver(.failure("Cannot Load Asset Status: \(status)"))
+                            return
+                        }
+                    }
+                    
+                    DispatchQueue.main.async {
+                        self.player.replaceCurrentItem(with: item)
+                        self.pendingMediaItem = nil
+                        resolver(.success(true)) // New Item loaded
+                    }
                 }
-            }
-            return subscriber.eraseToAnyPublisher()
+            }.eraseToAnyPublisher()
         }
     }
     

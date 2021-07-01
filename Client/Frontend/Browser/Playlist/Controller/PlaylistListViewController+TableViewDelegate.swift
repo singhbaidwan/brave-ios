@@ -125,14 +125,16 @@ extension PlaylistListViewController: UITableViewDelegate {
                 switch error {
                 case .other(let err):
                     log.error(err)
+                    self.commitPlayerItemTransaction(at: indexPath, isExpired: false)
                     self.delegate?.displayLoadingResourceError()
                 case .expired:
-                    let selectedCell = tableView.cellForRow(at: indexPath) as? PlaylistCell
-                    selectedCell?.detailLabel.text = Strings.PlayList.expiredLabelTitle
+                    self.commitPlayerItemTransaction(at: indexPath, isExpired: true)
                     self.delegate?.displayExpiredResourceError(item: item)
                 case .none:
+                    self.commitPlayerItemTransaction(at: indexPath, isExpired: false)
                     self.delegate?.updateLastPlayedItem(item: item)
                 case .cancelled:
+                    self.commitPlayerItemTransaction(at: indexPath, isExpired: false)
                     log.debug("User cancelled Playlist Playback")
                 }
             }

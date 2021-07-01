@@ -38,7 +38,11 @@ protocol VideoViewDelegate: AnyObject {
 
 class VideoView: UIView, VideoTrackerBarDelegate {
     
-    weak var delegate: VideoViewDelegate?
+    weak var delegate: VideoViewDelegate? {
+        didSet {
+            self.toggleOverlays(showOverlay: true)
+        }
+    }
     
     private let particleView = PlaylistParticleEmitter().then {
         $0.isHidden = false
