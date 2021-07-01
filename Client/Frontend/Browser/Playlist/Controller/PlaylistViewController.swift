@@ -5,12 +5,14 @@
 
 import Foundation
 import UIKit
-import BraveShared
-import Shared
 import AVKit
 import AVFoundation
 import CarPlay
 import MediaPlayer
+import Combine
+
+import BraveShared
+import Shared
 import SDWebImage
 import CoreData
 import Data
@@ -22,19 +24,58 @@ protocol PlaylistViewControllerDelegate: AnyObject {
     func onSidePanelStateChanged()
     func onFullscreen()
     func onExitFullscreen()
+    func playItem(item: PlaylistInfo, completion: ((PlaylistMediaStreamer.PlaybackError) -> Void)?)
+    func updateLastPlayedItem(item: PlaylistInfo)
+    func displayLoadingResourceError()
+    func displayExpiredResourceError(item: PlaylistInfo)
+    
+    var currentPlaylistItem: AVPlayerItem? { get }
 }
 
 // MARK: PlaylistViewController
 
-class PlaylistViewController: UIViewController, PlaylistViewControllerDelegate {
+class PlaylistViewController: UIViewController {
     
     // MARK: Properties
 
     private let player = MediaPlayer()
     private let playerView = VideoView()
+    private lazy var mediaStreamer = PlaylistMediaStreamer(playerView: playerView)
+    
     private let splitController = UISplitViewController()
-    private let listController = PlaylistListViewController()
+    private lazy var listController = PlaylistListViewController(playerView: playerView)
     private let detailController = PlaylistDetailViewController()
+    
+    private var playerStateObservers = Set<AnyCancellable>()
+    private var assetStateObserver = Set<AnyCancellable>()
+    private var currentlyPlayingItemIndex = -1
+    
+    deinit {
+        // Store the last played item's time-offset
+        if let playTime = player.currentItem?.currentTime(),
+           Preferences.Playlist.playbackLeftOff.value {
+            Preferences.Playlist.lastPlayedItemTime.value = playTime.seconds
+        } else {
+            Preferences.Playlist.lastPlayedItemTime.value = 0.0
+        }
+        
+        // Stop picture in picture
+        player.pictureInPictureController?.delegate = nil
+        player.pictureInPictureController?.stopPictureInPicture()
+        
+        // Stop media playback
+        playerView.stop()
+        
+        // If this controller is retained in app-delegate for Picture-In-Picture support
+        // then we need to re-attach the player layer
+        // and deallocate it.
+        if let delegate = UIApplication.shared.delegate as? AppDelegate {
+            if UIDevice.isIpad {
+                playerView.attachLayer(player: player)
+            }
+            delegate.playlistRestorationController = nil
+        }
+    }
     
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -79,7 +120,7 @@ class PlaylistViewController: UIViewController, PlaylistViewControllerDelegate {
                 
                 // On iPhone Pro Max which displays like an iPad, we need to hide navigation bar.
                 if UIDevice.isPhone && UIDevice.current.orientation.isLandscape {
-                    listController.onFullScreen()
+                    listController.onFullscreen()
                 }
             }
         } else {
@@ -112,7 +153,8 @@ class PlaylistViewController: UIViewController, PlaylistViewControllerDelegate {
     
     private func observePlayerStates() {
         player.publisher(for: .finishedPlaying).sink { [weak self] event in
-            guard let self = self, let currentItem = event.mediaPlayer.currentItem else { return }
+            guard let self = self,
+                  let currentItem = event.mediaPlayer.currentItem else { return }
             
             self.playerView.controlsView.playPauseButton.isEnabled = false
             self.playerView.controlsView.playPauseButton.setImage(#imageLiteral(resourceName: "playlist_pause"), for: .normal)
@@ -127,8 +169,8 @@ class PlaylistViewController: UIViewController, PlaylistViewControllerDelegate {
             self.playerView.controlsView.playPauseButton.setImage(#imageLiteral(resourceName: "playlist_play"), for: .normal)
 
             self.playerView.toggleOverlays(showOverlay: true)
-            self.onNextTrack(isUserInitiated: false)
-        }
+            self.onNextTrack(self.playerView, isUserInitiated: false)
+        }.store(in: &playerStateObservers)
         
         player.publisher(for: .periodicPlayTimeChanged).sink { [weak self] event in
             guard let self = self, let currentItem = event.mediaPlayer.currentItem else { return }
@@ -138,7 +180,7 @@ class PlaylistViewController: UIViewController, PlaylistViewControllerDelegate {
             if CMTimeCompare(endTime, .zero) != 0 && endTime.value > 0 {
                 self.playerView.controlsView.trackBar.setTimeRange(currentTime: event.mediaPlayer.currentTime, endTime: endTime)
             }
-        }
+        }.store(in: &playerStateObservers)
         
         self.playerView.infoView.pictureInPictureButton.isEnabled =
             AVPictureInPictureController.isPictureInPictureSupported()
@@ -147,7 +189,7 @@ class PlaylistViewController: UIViewController, PlaylistViewControllerDelegate {
             
             self.playerView.infoView.pictureInPictureButton.isEnabled =
                 event.mediaPlayer.pictureInPictureController?.isPictureInPicturePossible == true
-        }
+        }.store(in: &playerStateObservers)
     }
 }
 
@@ -192,115 +234,339 @@ extension PlaylistViewController: UISplitViewControllerDelegate {
     }
 }
 
-extension PlaylistViewController: VideoViewDelegate {
-    func onPreviousTrack(isUserInitiated: Bool) {
-        
+// MARK: - PlaylistViewControllerDelegate
+
+extension PlaylistViewController: PlaylistViewControllerDelegate {
+    func attachPlayerView() {
+        playerView.attachLayer(player: player)
     }
     
-    func onNextTrack(isUserInitiated: Bool) {
-        
+    func detachPlayerView() {
+        playerView.detachLayer()
     }
     
     func onSidePanelStateChanged() {
         detailController.onSidePanelStateChanged()
     }
     
-    func onPictureInPicture() {
+    func onFullscreen() {
+        if !UIDevice.isIpad || splitViewController?.isCollapsed == true {
+            listController.onFullscreen()
+        } else {
+            detailController.onFullscreen()
+        }
+    }
+    
+    func onExitFullscreen() {
+        detailController.onExitFullscreen()
+    }
+    
+    func playItem(item: PlaylistInfo, completion: ((PlaylistMediaStreamer.PlaybackError) -> Void)?) {
+        self.assetStateObserver.forEach({ $0.cancel() })
+        self.assetStateObserver.removeAll()
+        
+        // This MUST be checked.
+        // The user must not be able to alter a player that isn't visible from any UI!
+        // This is because, if car-play is interface is attached, the player can only be
+        // controller through this UI so long as it is attached to it.
+        // If it isn't attached, the player can only be controlled through the car-play interface.
+        guard player.isAttachedToDisplay else {
+            completion?(.none)
+            return
+        }
+
+        // If the item is cached, load it from the cache and play it.
+        let cacheState = PlaylistManager.shared.state(for: item.pageSrc)
+        if cacheState != .invalid {
+            if let index = PlaylistManager.shared.index(of: item.pageSrc),
+               let asset = PlaylistManager.shared.assetAtIndex(index) {
+                load(playerView,
+                     asset: asset,
+                     autoPlayEnabled: listController.autoPlayEnabled)
+            } else {
+                completion?(.expired)
+            }
+            return
+        }
+        
+        // The item is not cached so we should attempt to stream it
+        mediaStreamer.loadMediaStreamingAsset(item)
+        .handleEvents(receiveCancel: { [weak self] in
+            log.debug("Stream Cancelled")
+            self?.assetStateObserver.removeAll()
+        })
+        .sink(receiveCompletion: { [weak self] error in
+            switch error {
+            case .failure(let error):
+                self?.assetStateObserver.removeAll()
+                completion?(error)
+            case .finished:
+                break
+            }
+        }, receiveValue: { [weak self] _ in
+            guard let self = self else {
+                completion?(.cancelled)
+                return
+            }
+            
+            self.assetStateObserver.removeAll()
+            
+            guard let index = PlaylistManager.shared.index(of: item.pageSrc),
+                  let item = PlaylistManager.shared.itemAtIndex(index) else {
+                completion?(.expired)
+                return
+            }
+            
+            if let url = URL(string: item.pageSrc) {
+                self.load(self.playerView,
+                          url: url,
+                          autoPlayEnabled: self.listController.autoPlayEnabled)
+                log.debug("Playing Live Video: \(self.player.isLiveMedia)")
+            } else {
+                completion?(.expired)
+            }
+        }).store(in: &assetStateObserver)
+    }
+    
+    func updateLastPlayedItem(item: PlaylistInfo) {
+        Preferences.Playlist.lastPlayedItemUrl.value = item.pageSrc
+        
+        if let playTime = player.currentItem?.currentTime(),
+           Preferences.Playlist.playbackLeftOff.value {
+            Preferences.Playlist.lastPlayedItemTime.value = playTime.seconds
+        } else {
+            Preferences.Playlist.lastPlayedItemTime.value = 0.0
+        }
+    }
+    
+    func displayLoadingResourceError() {
+        let isPrimaryDisplayMode = splitController.displayMode == .primaryOverlay
+        if isPrimaryDisplayMode {
+            listController.displayLoadingResourceError()
+        } else {
+            detailController.displayLoadingResourceError()
+        }
+    }
+    
+    func displayExpiredResourceError(item: PlaylistInfo) {
+        let isPrimaryDisplayMode = splitController.displayMode == .primaryOverlay
+        if isPrimaryDisplayMode {
+            listController.displayExpiredResourceError(item: item)
+        } else {
+            detailController.displayExpiredResourceError(item: item)
+        }
+    }
+    
+    var currentPlaylistItem: AVPlayerItem? {
+        player.currentItem
+    }
+}
+
+// MARK: - VideoViewDelegate
+
+extension PlaylistViewController: VideoViewDelegate {
+    func onSidePanelStateChanged(_ videoView: VideoView) {
+        onSidePanelStateChanged()
+    }
+    
+    func onPreviousTrack(_ videoView: VideoView, isUserInitiated: Bool) {
+        if currentlyPlayingItemIndex <= 0 {
+            return
+        }
+        
+        let index = currentlyPlayingItemIndex - 1
+        if index < PlaylistManager.shared.numberOfAssets {
+            let indexPath = IndexPath(row: index, section: 0)
+            listController.prepareToPlayItem(at: indexPath) { [weak self] item in
+                guard let self = self,
+                      let item = item else {
+                    
+                    self?.listController.commitPlayerItemTransaction(at: indexPath, isExpired: false)
+                    return
+                }
+                
+                self.currentlyPlayingItemIndex = indexPath.row
+                self.playItem(item: item) { [weak self] error in
+                    guard let self = self else { return }
+                    
+                    switch error {
+                    case .other(let err):
+                        log.error(err)
+                        self.displayLoadingResourceError()
+                    case .expired:
+                        self.displayExpiredResourceError(item: item)
+                    case .none:
+                        self.currentlyPlayingItemIndex = index
+                        self.updateLastPlayedItem(item: item)
+                    case .cancelled:
+                        log.debug("User Cancelled Playlist Playback")
+                    }
+                }
+            }
+        }
+    }
+    
+    func onNextTrack(_ videoView: VideoView, isUserInitiated: Bool) {
+        let assetCount = PlaylistManager.shared.numberOfAssets
+        let isAtEnd = currentlyPlayingItemIndex >= assetCount - 1
+        var index = currentlyPlayingItemIndex
+        
+        switch repeatMode {
+        case .none:
+            if isAtEnd {
+                player.pictureInPictureController?.delegate = nil
+                player.pictureInPictureController?.stopPictureInPicture()
+                player.stop()
+                
+                if let delegate = UIApplication.shared.delegate as? AppDelegate {
+                    if UIDevice.isIpad {
+                        playerView.attachLayer(player: player)
+                    }
+                    delegate.playlistRestorationController = nil
+                }
+                return
+            }
+            index += 1
+        case .repeatOne:
+            player.seek(to: 0.0)
+            player.play()
+            return
+        case .repeatAll:
+            index = isAtEnd ? 0 : index + 1
+        }
+        
+        if index >= 0 {
+            let indexPath = IndexPath(row: index, section: 0)
+            listController.prepareToPlayItem(at: indexPath) { [weak self] item in
+                guard let self = self,
+                      let item = item else {
+                    
+                    self?.listController.commitPlayerItemTransaction(at: indexPath, isExpired: false)
+                    return
+                }
+                
+                self.playItem(item: item) { [weak self] error in
+                    guard let self = self else { return }
+                    
+                    switch error {
+                    case .other(let err):
+                        log.error(err)
+                        self.displayLoadingResourceError()
+                    case .expired:
+                        if isUserInitiated || self.repeatMode == .repeatOne || assetCount <= 1 {
+                            self.displayExpiredResourceError(item: item)
+                        } else {
+                            DispatchQueue.main.async {
+                                self.currentlyPlayingItemIndex = index
+                                self.onNextTrack(videoView, isUserInitiated: isUserInitiated)
+                            }
+                        }
+                    case .none:
+                        self.currentlyPlayingItemIndex = index
+                        self.updateLastPlayedItem(item: item)
+                    case .cancelled:
+                        log.debug("User Cancelled Playlist Playback")
+                    }
+                }
+            }
+        }
+    }
+    
+    func onPictureInPicture(_ videoView: VideoView) {
         guard let pictureInPictureController = player.pictureInPictureController else { return }
   
         DispatchQueue.main.async {
             if pictureInPictureController.isPictureInPictureActive {
-                self.onPictureInPicture(enabled: false)
+                // Picture in Picture disabled
+                pictureInPictureController.delegate = self
                 pictureInPictureController.stopPictureInPicture()
             } else {
                 if #available(iOS 14.0, *) {
                     pictureInPictureController.requiresLinearPlayback = false
                 }
 
-                self.onPictureInPicture(enabled: true)
+                // Picture in Picture enabled
+                pictureInPictureController.delegate = self
                 pictureInPictureController.startPictureInPicture()
             }
         }
     }
     
-    func onFullscreen() {
-        detailController.onFullScreen()
+    func onFullscreen(_ videoView: VideoView) {
+        onFullscreen()
     }
     
-    func onExitFullscreen() {
-        detailController.onExitFullScreen()
+    func onExitFullscreen(_ videoView: VideoView) {
+        onExitFullscreen()
     }
     
-    func play() {
+    func play(_ videoView: VideoView) {
         player.play()
     }
     
-    func pause() {
+    func pause(_ videoView: VideoView) {
         player.pause()
     }
     
-    func stop() {
+    func stop(_ videoView: VideoView) {
         player.stop()
     }
     
-    func seekBackwards() {
+    func seekBackwards(_ videoView: VideoView) {
         player.seekBackwards()
     }
     
-    func seekForwards() {
+    func seekForwards(_ videoView: VideoView) {
         player.seekForwards()
     }
     
-    func seek(to time: TimeInterval) {
+    func seek(_ videoView: VideoView, to time: TimeInterval) {
         player.seek(to: time)
     }
     
-    func seek(relativeOffset: Float) {
+    func seek(_ videoView: VideoView, relativeOffset: Float) {
         if let currentItem = player.currentItem {
             let seekTime = CMTimeMakeWithSeconds(Float64(CGFloat(relativeOffset) * CGFloat(currentItem.asset.duration.value) / CGFloat(currentItem.asset.duration.timescale)), preferredTimescale: currentItem.currentTime().timescale)
-            seek(to: seekTime.seconds)
+            seek(videoView, to: seekTime.seconds)
         }
     }
     
-    func setPlaybackRate(rate: Float) {
+    func setPlaybackRate(_ videoView: VideoView, rate: Float) {
         player.setPlaybackRate(rate: rate)
     }
     
-    func togglePlayerGravity() {
+    func togglePlayerGravity(_ videoView: VideoView) {
         player.toggleGravity()
     }
     
-    func toggleRepeatMode() {
+    func toggleRepeatMode(_ videoView: VideoView) {
         player.toggleRepeatMode()
     }
     
-    var isPlaying: Bool {
-        player.isPlaying
+    func load(_ videoView: VideoView, url: URL, autoPlayEnabled: Bool) {
+        load(videoView, asset: AVURLAsset(url: url), autoPlayEnabled: autoPlayEnabled)
     }
     
-    var repeatMode: MediaPlayer.RepeatMode {
-        player.repeatState
-    }
-    
-    public func load(url: URL, autoPlayEnabled: Bool) {
-        load(asset: AVURLAsset(url: url), autoPlayEnabled: autoPlayEnabled)
-    }
-    
-    public func load(asset: AVURLAsset, autoPlayEnabled: Bool) {
+    func load(_ videoView: VideoView, asset: AVURLAsset, autoPlayEnabled: Bool) {
+        assetStateObserver.removeAll()
+        player.stop()
+        
         player.load(asset: asset)
         .receive(on: RunLoop.main)
-        .sink(receiveCompletion: { error in
+        .sink(receiveCompletion: { [weak self] error in
             if case .failure(let error) = error {
-                print(error)
+                self?.assetStateObserver.removeAll()
+                log.error(error)
             }
         }, receiveValue: { [weak self] isNewItem in
             guard let self = self, let item = self.player.currentItem else { return }
+            self.assetStateObserver.removeAll()
             
             // We are playing the same item again..
             if !isNewItem {
-                self.pause()
-                self.seek(relativeOffset: 0.0) // Restart playback
-                self.play()
+                self.pause(videoView)
+                self.seek(videoView, relativeOffset: 0.0) // Restart playback
+                self.play(videoView)
                 return
             }
             
@@ -315,9 +581,28 @@ extension PlaylistViewController: VideoViewDelegate {
             self.playerView.controlsView.trackBar.setTimeRange(currentTime: item.currentTime(), endTime: endTime)
             
             if autoPlayEnabled {
-                self.play() // Play the new item
+                self.play(videoView) // Play the new item
             }
-        })
+        }).store(in: &assetStateObserver)
+    }
+    
+    var isPlaying: Bool {
+        player.isPlaying
+    }
+    
+    var repeatMode: MediaPlayer.RepeatMode {
+        player.repeatState
+    }
+    
+    var isVideoTracksAvailable: Bool {
+        if let asset = player.currentItem?.asset {
+            return asset.isVideoTracksAvailable()
+        }
+        
+        // We do this because for m3u8 HLS streams,
+        // tracks may not always be available and the particle effect will show even on videos..
+        // It's best to assume this type of media is a video stream.
+        return true
     }
 }
 

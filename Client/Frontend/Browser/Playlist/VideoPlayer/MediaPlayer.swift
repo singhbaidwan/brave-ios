@@ -28,11 +28,6 @@ class MediaPlayer: NSObject {
     private(set) public var pictureInPictureController: AVPictureInPictureController?
     private(set) var repeatState: RepeatMode = .none
     
-    public let playerLayer = AVPlayerLayer().then {
-        $0.videoGravity = .resizeAspect
-        $0.needsDisplayOnBoundsChange = true
-    }
-    
     public var isPlaying: Bool {
         // It is better NOT to keep tracking of isPlaying OR rate > 0.0
         // Instead we should use the timeControlStatus because PIP and Background play
@@ -53,6 +48,10 @@ class MediaPlayer: NSObject {
     
     public var isLiveMedia: Bool {
         (player.currentItem ?? pendingMediaItem)?.asset.duration.isIndefinite == true
+    }
+    
+    public var isAttachedToDisplay: Bool {
+        playerLayer.superlayer != nil
     }
     
     override init() {
@@ -260,11 +259,25 @@ class MediaPlayer: NSObject {
                                                             event: .changePlaybackRate))
     }
     
+    func attachLayer() -> CALayer {
+        playerLayer.player = player
+        return playerLayer
+    }
+    
+    func detachLayer() {
+        playerLayer.player = nil
+    }
+    
     // MARK: - Private Variables
     
     private let player = AVPlayer().then {
         $0.seek(to: .zero)
         $0.actionAtItemEnd = .none
+    }
+    
+    private let playerLayer = AVPlayerLayer().then {
+        $0.videoGravity = .resizeAspect
+        $0.needsDisplayOnBoundsChange = true
     }
     
     private var periodicTimeObserver: Any?

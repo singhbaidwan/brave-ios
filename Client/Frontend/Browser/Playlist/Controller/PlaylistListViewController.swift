@@ -32,10 +32,8 @@ class PlaylistListViewController: UIViewController {
     // MARK: Properties
     
     weak var delegate: PlaylistViewControllerDelegate?
-    private weak var playerView: VideoView?
+    private let playerView: VideoView
     private let contentManager = MPPlayableContentManager.shared()
-    private(set) lazy var mediaInfo = PlaylistMediaInfo(playerView: playerView)
-    var currentlyPlayingItemIndex = -1
     private(set) var autoPlayEnabled = Preferences.Playlist.firstLoadAutoPlay.value
     var playerController: AVPlayerViewController?
     
@@ -51,7 +49,8 @@ class PlaylistListViewController: UIViewController {
         $0.allowsSelectionDuringEditing = true
     }
     
-    init() {
+    init(playerView: VideoView) {
+        self.playerView = playerView
         super.init(nibName: nil, bundle: nil)
     }
     
@@ -59,42 +58,13 @@ class PlaylistListViewController: UIViewController {
         fatalError("init(coder:) has not been implemented")
     }
     
-    deinit {
-        if let playTime = playerView.player.currentItem?.currentTime(),
-           Preferences.Playlist.playbackLeftOff.value {
-            Preferences.Playlist.lastPlayedItemTime.value = playTime.seconds
-        } else {
-            Preferences.Playlist.lastPlayedItemTime.value = 0.0
-        }
-        
-        playerView.pictureInPictureController?.delegate = nil
-        playerView.pictureInPictureController?.stopPictureInPicture()
-        playerView.stop()
-        
-        if let delegate = UIApplication.shared.delegate as? AppDelegate {
-            if UIDevice.isIpad {
-                playerView.attachLayer()
-            }
-            delegate.playlistRestorationController = nil
-        }
-    }
-    
     override func viewDidLoad() {
         super.viewDidLoad()
         
         PlaylistManager.shared.delegate = self
     
-        setTheme()
-        setup()
-
-        fetchResults()
-    }
-    
-    // MARK: Internal
-    
-    private func setTheme() {
+        // Theme
         title = Strings.PlayList.playListSectionTitle
-
         view.backgroundColor = .braveBackground
         navigationController?.do {
             let appearance = UINavigationBarAppearance()
@@ -106,9 +76,8 @@ class PlaylistListViewController: UIViewController {
             $0.navigationBar.barTintColor = UIColor.braveBackground
             $0.navigationBar.tintColor = .white
         }
-    }
-    
-    private func setup () {
+        
+        // Layout
         tableView.do {
             $0.register(PlaylistCell.self, forCellReuseIdentifier: Constants.playListCellIdentifier)
             $0.dataSource = self
@@ -117,58 +86,105 @@ class PlaylistListViewController: UIViewController {
             $0.dropDelegate = self
             $0.dragInteractionEnabled = true
         }
-        
-        playerView.delegate = self
+
+        // Update
+        DispatchQueue.main.async {
+            self.fetchResults()
+        }
     }
     
+    // MARK: Internal
+    
     private func fetchResults() {
-        playerView.setControlsEnabled(playerView.player.currentItem != nil)
         updateTableBackgroundView()
+        playerView.setControlsEnabled(false)
         
-        DispatchQueue.main.async {
-            PlaylistManager.shared.reloadData()
-            self.tableView.reloadData()
-            self.contentManager.reloadData()
+        PlaylistManager.shared.reloadData()
+        tableView.reloadData()
+        contentManager.reloadData()
+        
+        // After reloading all data, update the background
+        guard PlaylistManager.shared.numberOfAssets > 0 else {
+            self.updateTableBackgroundView()
+            return
+        }
+        
+        // Otherwise prepare to play the first item
+        playerView.setControlsEnabled(true)
+        
+        // If there is no last played item, then just select the first item in the playlist
+        // which will play it if auto-play is enabled.
+        guard let lastPlayedItemUrl = Preferences.Playlist.lastPlayedItemUrl.value,
+              let index = PlaylistManager.shared.index(of: lastPlayedItemUrl) else {
             
-            if PlaylistManager.shared.numberOfAssets > 0 {
-                self.playerView.setControlsEnabled(true)
-                
-                if let lastPlayedItemUrl = Preferences.Playlist.lastPlayedItemUrl.value, let index = PlaylistManager.shared.index(of: lastPlayedItemUrl) {
-                    let indexPath = IndexPath(row: index, section: 0)
-                    
-                    self.playItem(at: indexPath, completion: { [weak self] error in
-                        guard let self = self else { return }
-                        
-                        switch error {
-                        case .error(let err):
-                            log.error(err)
-                            self.displayLoadingResourceError()
-                        case .expired:
-                            let item = PlaylistManager.shared.itemAtIndex(indexPath.row)
-                            self.displayExpiredResourceError(item: item)
-                        case .none:
-                            let item = PlaylistManager.shared.itemAtIndex(indexPath.row)
-                            guard let item = item else { return }
-                            
-                            let lastPlayedTime = Preferences.Playlist.lastPlayedItemTime.value
-                            if item.pageSrc == Preferences.Playlist.lastPlayedItemUrl.value &&
-                                lastPlayedTime > 0.0 &&
-                                lastPlayedTime < self.playerView.player.currentItem?.duration.seconds ?? 0.0 &&
-                                Preferences.Playlist.playbackLeftOff.value {
-                                self.playerView.seek(to: Preferences.Playlist.lastPlayedItemTime.value)
-                            }
-                            
-                            self.updateLastPlayedItem(indexPath: indexPath)
-                        }
-                    })
-                } else {
-                    self.tableView.delegate?.tableView?(self.tableView, didSelectRowAt: IndexPath(row: 0, section: 0))
-                }
-                
-                self.autoPlayEnabled = true
+            tableView.delegate?.tableView?(tableView, didSelectRowAt: IndexPath(row: 0, section: 0))
+            autoPlayEnabled = true
+            return
+        }
+        
+        // Prepare the UI before playing the item
+        let indexPath = IndexPath(row: index, section: 0)
+        prepareToPlayItem(at: indexPath) { [weak self] item in
+            guard let self = self,
+                  let delegate = self.delegate,
+                  let item = item else {
+                self?.commitPlayerItemTransaction(at: indexPath,
+                                                  isExpired: false)
+                return
             }
             
-            self.updateTableBackgroundView()
+            delegate.playItem(item: item) { [weak self] error in
+                guard let self = self,
+                      let delegate = self.delegate else {
+                    self?.commitPlayerItemTransaction(at: indexPath,
+                                                     isExpired: false)
+                    return
+                }
+                
+                switch error {
+                case .cancelled:
+                    self.commitPlayerItemTransaction(at: indexPath,
+                                                     isExpired: false)
+                case .other(let err):
+                    log.error(err)
+                    self.commitPlayerItemTransaction(at: indexPath,
+                                                     isExpired: false)
+                    delegate.displayLoadingResourceError()
+                case .expired:
+                    self.commitPlayerItemTransaction(at: indexPath,
+                                                     isExpired: true)
+                    delegate.displayExpiredResourceError(item: item)
+                case .none:
+                    self.commitPlayerItemTransaction(at: indexPath,
+                                                     isExpired: false)
+                    
+                    // Update the player position/time-offset of the last played item
+                    self.seekLastPlayedItem(at: indexPath)
+                    
+                    // Even if the item was NOT previously the last played item,
+                    // it is now as it has begun to play
+                    delegate.updateLastPlayedItem(item: item)
+                }
+            }
+        }
+        
+        autoPlayEnabled = true
+    }
+    
+    private func seekLastPlayedItem(at indexPath: IndexPath) {
+        // The item can be deleted at any time,
+        // so we need to guard against it and make sure the index path matches up correctly
+        // If it does, we check the last played time
+        // and seek to that position in the media item
+        let item = PlaylistManager.shared.itemAtIndex(indexPath.row)
+        guard let item = item else { return }
+        
+        let lastPlayedTime = Preferences.Playlist.lastPlayedItemTime.value
+        if item.pageSrc == Preferences.Playlist.lastPlayedItemUrl.value &&
+            lastPlayedTime > 0.0 &&
+            lastPlayedTime < delegate?.currentPlaylistItem?.duration.seconds ?? 0.0 &&
+            Preferences.Playlist.playbackLeftOff.value {
+            self.playerView.seek(to: Preferences.Playlist.lastPlayedItemTime.value)
         }
     }
     
@@ -310,6 +326,68 @@ extension PlaylistListViewController {
             tableView.separatorStyle = .none
         }
     }
+    
+    func prepareToPlayItem(at indexPath: IndexPath, _ completion: ((PlaylistInfo?) -> Void)?) {
+        // Update the UI in preparation to play an item
+        // Show the activity indicator, update the cell and player view, etc.
+        guard indexPath.row < PlaylistManager.shared.numberOfAssets,
+           let item = PlaylistManager.shared.itemAtIndex(indexPath.row) else {
+            completion?(nil)
+            return
+        }
+        
+        activityIndicator.startAnimating()
+        activityIndicator.isHidden = false
+
+        let selectedCell = tableView.cellForRow(at: indexPath) as? PlaylistCell
+        playerView.setVideoInfo(videoDomain: item.pageSrc, videoTitle: item.pageTitle)
+        
+        // TODO: FIX!
+        //mediaInfo.updateNowPlayingMediaArtwork(image: selectedCell?.thumbnailView.image)
+        completion?(item)
+    }
+    
+    func commitPlayerItemTransaction(at indexPath: IndexPath, isExpired: Bool) {
+        if isExpired {
+            let selectedCell = tableView.cellForRow(at: indexPath) as? PlaylistCell
+            selectedCell?.detailLabel.text = Strings.PlayList.expiredLabelTitle
+        }
+        
+        activityIndicator.stopAnimating()
+    }
+}
+
+// MARK: - Error Handling
+
+extension PlaylistListViewController {
+    func displayExpiredResourceError(item: PlaylistInfo?) {
+        if let item = item {
+            let alert = UIAlertController(title: Strings.PlayList.expiredAlertTitle,
+                                          message: Strings.PlayList.expiredAlertDescription, preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: Strings.PlayList.reopenButtonTitle, style: .default, handler: { _ in
+                
+                if let url = URL(string: item.pageSrc) {
+                    self.dismiss(animated: true, completion: nil)
+                    (UIApplication.shared.delegate as? AppDelegate)?.browserViewController.openURLInNewTab(url, isPrivileged: false)
+                }
+            }))
+            alert.addAction(UIAlertAction(title: Strings.cancelButtonTitle, style: .cancel, handler: nil))
+            self.present(alert, animated: true, completion: nil)
+        } else {
+            let alert = UIAlertController(title: Strings.PlayList.expiredAlertTitle,
+                                          message: Strings.PlayList.expiredAlertDescription, preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: Strings.OKString, style: .default, handler: nil))
+            self.present(alert, animated: true, completion: nil)
+        }
+    }
+    
+    func displayLoadingResourceError() {
+        let alert = UIAlertController(
+            title: Strings.PlayList.sorryAlertTitle, message: Strings.PlayList.loadResourcesErrorAlertDescription, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: Strings.PlayList.okayButtonTitle, style: .default, handler: nil))
+        
+        self.present(alert, animated: true, completion: nil)
+    }
 }
 
 extension PlaylistListViewController: UIGestureRecognizerDelegate {
@@ -320,108 +398,17 @@ extension PlaylistListViewController: UIGestureRecognizerDelegate {
 
 // MARK: VideoViewDelegate
 
-extension PlaylistListViewController: VideoViewDelegate {
-    func onPreviousTrack(isUserInitiated: Bool) {
-        if currentlyPlayingItemIndex <= 0 {
-            return
-        }
-        
-        let index = currentlyPlayingItemIndex - 1
-        if index < PlaylistManager.shared.numberOfAssets {
-            let indexPath = IndexPath(row: index, section: 0)
-            playItem(at: indexPath) { [weak self] error in
-                guard let self = self else { return }
-                switch error {
-                case .error(let err):
-                    log.error(err)
-                    self.displayLoadingResourceError()
-                case .expired:
-                    let item = PlaylistManager.shared.itemAtIndex(index)
-                    self.displayExpiredResourceError(item: item)
-                case .none:
-                    self.currentlyPlayingItemIndex = index
-                    self.updateLastPlayedItem(indexPath: indexPath)
-                }
-            }
+extension PlaylistListViewController {
+    
+    func onFullscreen() {
+        navigationController?.setNavigationBarHidden(true, animated: true)
+        tableView.isHidden = true
+        playerView.snp.remakeConstraints {
+            $0.edges.equalToSuperview()
         }
     }
     
-    func onNextTrack(isUserInitiated: Bool) {
-        let assetCount = PlaylistManager.shared.numberOfAssets
-        let isAtEnd = currentlyPlayingItemIndex >= assetCount - 1
-        var index = currentlyPlayingItemIndex
-        
-        switch playerView.repeatState {
-        case .none:
-            if isAtEnd {
-                playerView.pictureInPictureController?.delegate = nil
-                playerView.pictureInPictureController?.stopPictureInPicture()
-                playerView.stop()
-                
-                if let delegate = UIApplication.shared.delegate as? AppDelegate {
-                    if UIDevice.isIpad {
-                        playerView.attachLayer()
-                    }
-                    delegate.playlistRestorationController = nil
-                }
-                return
-            }
-            index += 1
-        case .repeatOne:
-            playerView.seek(to: 0.0)
-            playerView.play()
-            return
-        case .repeatAll:
-            index = isAtEnd ? 0 : index + 1
-        }
-        
-        if index >= 0 {
-            let indexPath = IndexPath(row: index, section: 0)
-            playItem(at: indexPath) { [weak self] error in
-                guard let self = self else { return }
-                switch error {
-                case .error(let err):
-                    log.error(err)
-                    self.displayLoadingResourceError()
-                case .expired:
-                    if isUserInitiated || self.playerView.repeatState == .repeatOne || assetCount <= 1 {
-                        let item = PlaylistManager.shared.itemAtIndex(index)
-                        self.displayExpiredResourceError(item: item)
-                    } else {
-                        DispatchQueue.main.async {
-                            self.currentlyPlayingItemIndex = index
-                            self.onNextTrack(isUserInitiated: isUserInitiated)
-                        }
-                    }
-                case .none:
-                    self.currentlyPlayingItemIndex = index
-                    self.updateLastPlayedItem(indexPath: indexPath)
-                }
-            }
-        }
-    }
-    
-    func onPictureInPicture(enabled: Bool) {
-        playerView.pictureInPictureController?.delegate = enabled ? self : nil
-    }
-    
-    func onSidePanelStateChanged() {
-        delegate?.onSidePanelStateChanged()
-    }
-    
-    func onFullScreen() {
-        if !UIDevice.isIpad || splitViewController?.isCollapsed == true {
-            navigationController?.setNavigationBarHidden(true, animated: true)
-            tableView.isHidden = true
-            playerView.snp.remakeConstraints {
-                $0.edges.equalToSuperview()
-            }
-        } else {
-            delegate?.onFullscreen()
-        }
-    }
-    
-    func onExitFullScreen() {
+    func onExitFullscreen() {
         if UIDevice.isIpad && splitViewController?.isCollapsed == false {
             playerView.setFullscreenButtonHidden(true)
             playerView.setExitButtonHidden(false)

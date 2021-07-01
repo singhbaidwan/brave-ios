@@ -5,10 +5,12 @@
 
 import Foundation
 import BraveShared
+import Shared
+import Data
 
 class PlaylistDetailViewController: UIViewController, UIGestureRecognizerDelegate {
     
-    private weak var playerView: VideoView?
+    private var playerView: VideoView?
     
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -64,7 +66,7 @@ class PlaylistDetailViewController: UIViewController, UIGestureRecognizerDelegat
         onDisplayModeChange()
     }
     
-    func onFullScreen() {
+    func onFullscreen() {
         navigationController?.setNavigationBarHidden(true, animated: true)
         
         if navigationController?.isNavigationBarHidden == true {
@@ -72,7 +74,7 @@ class PlaylistDetailViewController: UIViewController, UIGestureRecognizerDelegat
         }
     }
     
-    func onExitFullScreen() {
+    func onExitFullscreen() {
         navigationController?.setNavigationBarHidden(false, animated: true)
         
         if navigationController?.isNavigationBarHidden == true {
@@ -124,5 +126,38 @@ class PlaylistDetailViewController: UIViewController, UIGestureRecognizerDelegat
                 playerView.removeFromSuperview()
             }
         }
+    }
+}
+
+// MARK: - Error Handling
+
+extension PlaylistDetailViewController {
+    func displayExpiredResourceError(item: PlaylistInfo?) {
+        if let item = item {
+            let alert = UIAlertController(title: Strings.PlayList.expiredAlertTitle,
+                                          message: Strings.PlayList.expiredAlertDescription, preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: Strings.PlayList.reopenButtonTitle, style: .default, handler: { _ in
+                
+                if let url = URL(string: item.pageSrc) {
+                    self.dismiss(animated: true, completion: nil)
+                    (UIApplication.shared.delegate as? AppDelegate)?.browserViewController.openURLInNewTab(url, isPrivileged: false)
+                }
+            }))
+            alert.addAction(UIAlertAction(title: Strings.cancelButtonTitle, style: .cancel, handler: nil))
+            self.present(alert, animated: true, completion: nil)
+        } else {
+            let alert = UIAlertController(title: Strings.PlayList.expiredAlertTitle,
+                                          message: Strings.PlayList.expiredAlertDescription, preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: Strings.OKString, style: .default, handler: nil))
+            self.present(alert, animated: true, completion: nil)
+        }
+    }
+    
+    func displayLoadingResourceError() {
+        let alert = UIAlertController(
+            title: Strings.PlayList.sorryAlertTitle, message: Strings.PlayList.loadResourcesErrorAlertDescription, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: Strings.PlayList.okayButtonTitle, style: .default, handler: nil))
+        
+        self.present(alert, animated: true, completion: nil)
     }
 }

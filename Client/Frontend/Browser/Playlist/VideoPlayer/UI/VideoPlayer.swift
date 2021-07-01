@@ -13,26 +13,27 @@ import AVFoundation
 private let log = Logger.browserLogger
 
 protocol VideoViewDelegate: AnyObject {
-    func onPreviousTrack(isUserInitiated: Bool)
-    func onNextTrack(isUserInitiated: Bool)
-    func onSidePanelStateChanged()
-    func onPictureInPicture()
-    func onFullscreen()
-    func onExitFullscreen()
+    func onPreviousTrack(_ videoView: VideoView, isUserInitiated: Bool)
+    func onNextTrack(_ videoView: VideoView, isUserInitiated: Bool)
+    func onSidePanelStateChanged(_ videoView: VideoView)
+    func onPictureInPicture(_ videoView: VideoView)
+    func onFullscreen(_ videoView: VideoView)
+    func onExitFullscreen(_ videoView: VideoView)
     
-    func play()
-    func pause()
-    func stop()
-    func seekBackwards()
-    func seekForwards()
-    func seek(to time: TimeInterval)
-    func seek(relativeOffset: Float)
-    func setPlaybackRate(rate: Float)
-    func togglePlayerGravity()
-    func toggleRepeatMode()
+    func play(_ videoView: VideoView)
+    func pause(_ videoView: VideoView)
+    func stop(_ videoView: VideoView)
+    func seekBackwards(_ videoView: VideoView)
+    func seekForwards(_ videoView: VideoView)
+    func seek(_ videoView: VideoView, to time: TimeInterval)
+    func seek(_ videoView: VideoView, relativeOffset: Float)
+    func setPlaybackRate(_ videoView: VideoView, rate: Float)
+    func togglePlayerGravity(_ videoView: VideoView)
+    func toggleRepeatMode(_ videoView: VideoView)
     
     var isPlaying: Bool { get }
     var repeatMode: MediaPlayer.RepeatMode { get }
+    var isVideoTracksAvailable: Bool { get }
 }
 
 class VideoView: UIView, VideoTrackerBarDelegate {
@@ -188,7 +189,7 @@ class VideoView: UIView, VideoTrackerBarDelegate {
     
     @objc
     private func onOverlayDoubleTapped(_ gestureRecognizer: UITapGestureRecognizer) {
-        delegate?.togglePlayerGravity()
+        delegate?.togglePlayerGravity(self)
     }
 
     private func seekDirectionWithAnimation(_ seekBlock: () -> Void) {
@@ -214,7 +215,7 @@ class VideoView: UIView, VideoTrackerBarDelegate {
     private func onRepeat(_ button: UIButton) {
         guard let delegate = delegate else { return }
         
-        delegate.toggleRepeatMode()
+        delegate.toggleRepeatMode(self)
         
         switch delegate.repeatMode {
         case .none:
@@ -254,25 +255,25 @@ class VideoView: UIView, VideoTrackerBarDelegate {
         }
         
         let wasPlaying = delegate.isPlaying
-        delegate.setPlaybackRate(rate: playbackRate)
+        delegate.setPlaybackRate(self, rate: playbackRate)
         
         if wasPlaying {
-            delegate.play()
+            delegate.play(self)
             controlsView.playPauseButton.setImage(#imageLiteral(resourceName: "playlist_pause"), for: .normal)
         } else {
-            delegate.pause()
+            delegate.pause(self)
             controlsView.playPauseButton.setImage(#imageLiteral(resourceName: "playlist_play"), for: .normal)
         }
     }
     
     @objc
     private func onSidePanel(_ button: UIButton) {
-        self.delegate?.onSidePanelStateChanged()
+        self.delegate?.onSidePanelStateChanged(self)
     }
     
     @objc
     private func onPictureInPicture(_ button: UIButton) {
-        delegate?.onPictureInPicture()
+        delegate?.onPictureInPicture(self)
     }
     
     @objc
@@ -280,7 +281,7 @@ class VideoView: UIView, VideoTrackerBarDelegate {
         isFullscreen = true
         infoView.fullscreenButton.isHidden = true
         infoView.exitButton.isHidden = false
-        self.delegate?.onFullscreen()
+        self.delegate?.onFullscreen(self)
     }
     
     @objc
@@ -288,7 +289,7 @@ class VideoView: UIView, VideoTrackerBarDelegate {
         isFullscreen = false
         infoView.fullscreenButton.isHidden = false
         infoView.exitButton.isHidden = true
-        self.delegate?.onExitFullscreen()
+        self.delegate?.onExitFullscreen(self)
     }
     
     @objc
@@ -308,20 +309,20 @@ class VideoView: UIView, VideoTrackerBarDelegate {
     @objc
     private func onSeekPrevious(_ gestureRecognizer: UIGestureRecognizer) {
         if gestureRecognizer.state == .began {
-            self.delegate?.onPreviousTrack(isUserInitiated: true)
+            self.delegate?.onPreviousTrack(self, isUserInitiated: true)
         }
     }
     
     @objc
     private func onSeekNext(_ gestureRecognizer: UIGestureRecognizer) {
         if gestureRecognizer.state == .began {
-            self.delegate?.onNextTrack(isUserInitiated: true)
+            self.delegate?.onNextTrack(self, isUserInitiated: true)
         }
     }
     
     @objc
     private func onNextTrack(_ button: UIButton) {
-        self.delegate?.onNextTrack(isUserInitiated: true)
+        self.delegate?.onNextTrack(self, isUserInitiated: true)
     }
     
     func onValueChanged(_ trackBar: VideoTrackerBar, value: CGFloat) {
@@ -330,14 +331,14 @@ class VideoView: UIView, VideoTrackerBarDelegate {
         isSeeking = true
         
         if delegate.isPlaying {
-            delegate.pause()
+            delegate.pause(self)
             wasPlayingBeforeSeeking = true
         }
         
         toggleOverlays(showOverlay: false, except: [infoView, controlsView], display: [controlsView])
         isOverlayDisplayed = true
         
-        delegate.seek(relativeOffset: Float(value))
+        delegate.seek(self, relativeOffset: Float(value))
     }
     
     func onValueEnded(_ trackBar: VideoTrackerBar, value: CGFloat) {
@@ -346,8 +347,8 @@ class VideoView: UIView, VideoTrackerBarDelegate {
         isSeeking = false
         
         if wasPlayingBeforeSeeking {
-            delegate.play()
-            delegate.setPlaybackRate(rate: playbackRate)
+            delegate.play(self)
+            delegate.setPlaybackRate(self, rate: playbackRate)
             wasPlayingBeforeSeeking = false
         }
         
@@ -372,7 +373,7 @@ class VideoView: UIView, VideoTrackerBarDelegate {
         var except = except
         var display = display
         
-        if isVideoAvailable() {
+        if delegate?.isVideoTracksAvailable == true {
             if showOverlay {
                 except.append(particleView)
             }
@@ -450,10 +451,10 @@ class VideoView: UIView, VideoTrackerBarDelegate {
     }
     
     func attachLayer(player: MediaPlayer) {
-        playerLayer = player.playerLayer
-        
-        layer.insertSublayer(player.playerLayer, at: 0)
-        playerLayer.player = player
+        playerLayer = player.attachLayer() as? AVPlayerLayer
+        if let playerLayer = playerLayer {
+            layer.insertSublayer(playerLayer, at: 0)
+        }
     }
     
     func detachLayer() {
@@ -469,7 +470,7 @@ class VideoView: UIView, VideoTrackerBarDelegate {
             toggleOverlays(showOverlay: false)
             isOverlayDisplayed = false
             
-            delegate?.play()
+            delegate?.play(self)
         }
     }
     
@@ -479,7 +480,7 @@ class VideoView: UIView, VideoTrackerBarDelegate {
             toggleOverlays(showOverlay: true)
             isOverlayDisplayed = true
             
-            delegate?.pause()
+            delegate?.pause(self)
         } else {
             toggleOverlays(showOverlay: isOverlayDisplayed)
         }
@@ -490,27 +491,27 @@ class VideoView: UIView, VideoTrackerBarDelegate {
         toggleOverlays(showOverlay: true)
         isOverlayDisplayed = true
         
-        delegate?.stop()
+        delegate?.stop(self)
     }
     
     func seek(to time: Double) {
-        delegate?.seek(to: time)
+        delegate?.seek(self, to: time)
     }
     
     func seekBackwards() {
-        delegate?.seekBackwards()
+        delegate?.seekBackwards(self)
     }
     
     func seekForwards() {
-        delegate?.seekForwards()
+        delegate?.seekForwards(self)
     }
     
     func previous() {
-        self.delegate?.onPreviousTrack(isUserInitiated: false)
+        self.delegate?.onPreviousTrack(self, isUserInitiated: false)
     }
     
     func next() {
-        self.delegate?.onNextTrack(isUserInitiated: false)
+        self.delegate?.onNextTrack(self, isUserInitiated: false)
     }
 }
 

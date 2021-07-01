@@ -157,7 +157,7 @@ class PlaylistManager: NSObject {
     func download(item: PlaylistInfo) {
         guard downloadManager.downloadTask(for: item.pageSrc) == nil, let assetUrl = URL(string: item.src) else { return }
         
-        MediaResourceManager.getMimeType(assetUrl) { [weak self] mimeType in
+        PlaylistMediaStreamer.getMimeType(assetUrl) { [weak self] mimeType in
             guard let self = self, let mimeType = mimeType?.lowercased() else { return }
 
             if mimeType.contains("x-mpegurl") || mimeType.contains("application/vnd.apple.mpegurl") || mimeType.contains("mpegurl") {
