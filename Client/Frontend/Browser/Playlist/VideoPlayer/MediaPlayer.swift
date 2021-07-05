@@ -46,6 +46,10 @@ class MediaPlayer: NSObject {
         player.currentTime()
     }
     
+    public var rate: Float {
+        player.rate
+    }
+    
     public var isLiveMedia: Bool {
         (player.currentItem ?? pendingMediaItem)?.asset.duration.isIndefinite == true
     }

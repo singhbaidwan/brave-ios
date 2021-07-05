@@ -8,6 +8,10 @@ import AVFoundation
 import Combine
 import Data
 import WebKit
+import MediaPlayer
+import Shared
+
+private let log = Logger.browserLogger
 
 class PlaylistMediaStreamer {
     private weak var playerView: UIView?
@@ -55,6 +59,8 @@ class PlaylistMediaStreamer {
         }.eraseToAnyPublisher()
     }
     
+    // MARK: - Private
+    
     private func streamingFallback(_ item: PlaylistInfo) -> Future<Void, PlaybackError> {
         // Fallback to web stream
         return Future { [weak self] resolver in
@@ -93,6 +99,51 @@ class PlaylistMediaStreamer {
         }
     }
     
+    // Would be nice if AVPlayer could detect the mime-type from the URL for my delegate without a head request..
+    // This function only exists because I can't figure out why videos from URLs don't play unless I explicitly specify a mime-type..
+    private func canStreamURL(_ url: URL) -> Future<Bool, PlaybackError> {
+        return Future { resolver in
+            PlaylistMediaStreamer.getMimeType(url) { mimeType in
+                if let mimeType = mimeType {
+                    resolver(.success(!mimeType.isEmpty))
+                } else {
+                    resolver(.success(false))
+                }
+            }
+        }
+    }
+    
+    // MARK: - Static
+    
+    static func setNowPlayingInfo(_ item: PlaylistInfo, withPlayer player: MediaPlayer) {
+        let mediaType: MPNowPlayingInfoMediaType =
+            item.mimeType.contains("video") ? .video : .audio
+        
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = [
+            MPNowPlayingInfoPropertyMediaType: mediaType,
+            MPMediaItemPropertyTitle: item.name,
+            MPMediaItemPropertyArtist: URL(string: item.pageSrc)?.baseDomain ?? item.pageSrc,
+            MPMediaItemPropertyPlaybackDuration: NSNumber(value: item.duration),
+            MPNowPlayingInfoPropertyPlaybackRate: NSNumber(value: player.rate),
+            MPNowPlayingInfoPropertyPlaybackProgress: NSNumber(value: 0.0),
+            MPNowPlayingInfoPropertyElapsedPlaybackTime: NSNumber(value: player.currentTime.seconds)
+        ]
+    }
+    
+    static func clearNowPlayingInfo() {
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+    }
+    
+    static func setNowPlayingMediaArtwork(image: UIImage?) {
+        if let image = image {
+            MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size, requestHandler: { _ -> UIImage in
+                // Do not resize image here.
+                // According to Apple it isn't necessary to use expensive resize operations
+                return image
+            })
+        }
+    }
+    
     static func getMimeType(_ url: URL, _ completion: @escaping (String?) -> Void) {
         let request: URLRequest = {
             var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 10.0)
@@ -107,8 +158,7 @@ class PlaylistMediaStreamer {
         URLSession(configuration: .ephemeral).dataTask(with: request) { data, response, error in
             DispatchQueue.main.async {
                 if let error = error {
-                    //TODO: FIX
-                    //log.error("Error fetching MimeType for playlist item: \(url) - \(error)")
+                    log.error("Error fetching MimeType for playlist item: \(url) - \(error)")
                     return completion(nil)
                 }
                 
@@ -125,19 +175,5 @@ class PlaylistMediaStreamer {
                 completion(nil)
             }
         }.resume()
-    }
-    
-    // Would be nice if AVPlayer could detect the mime-type from the URL for my delegate without a head request..
-    // This function only exists because I can't figure out why videos from URLs don't play unless I explicitly specify a mime-type..
-    private func canStreamURL(_ url: URL) -> Future<Bool, PlaybackError> {
-        return Future { resolver in
-            PlaylistMediaStreamer.getMimeType(url) { mimeType in
-                if let mimeType = mimeType {
-                    resolver(.success(!mimeType.isEmpty))
-                } else {
-                    resolver(.success(false))
-                }
-            }
-        }
     }
 }

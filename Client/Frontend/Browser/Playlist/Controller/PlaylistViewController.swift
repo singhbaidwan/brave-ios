@@ -27,6 +27,7 @@ protocol PlaylistViewControllerDelegate: AnyObject {
     func onFullscreen()
     func onExitFullscreen()
     func playItem(item: PlaylistInfo, completion: ((PlaylistMediaStreamer.PlaybackError) -> Void)?)
+    func deleteItem(item: PlaylistInfo, at index: Int)
     func updateLastPlayedItem(item: PlaylistInfo)
     func displayLoadingResourceError()
     func displayExpiredResourceError(item: PlaylistInfo)
@@ -267,7 +268,11 @@ extension PlaylistViewController: PlaylistViewControllerDelegate {
     }
     
     func onExitFullscreen() {
-        detailController.onExitFullscreen()
+        if !UIDevice.isIpad || splitViewController?.isCollapsed == true {
+            listController.onExitFullscreen()
+        } else {
+            detailController.onExitFullscreen()
+        }
     }
     
     func playItem(item: PlaylistInfo, completion: ((PlaylistMediaStreamer.PlaybackError) -> Void)?) {
@@ -314,11 +319,13 @@ extension PlaylistViewController: PlaylistViewControllerDelegate {
         // The item is not cached so we should attempt to stream it
         mediaStreamer.loadMediaStreamingAsset(item)
         .handleEvents(receiveCancel: {
+            PlaylistMediaStreamer.clearNowPlayingInfo()
             completion?(.cancelled)
         })
         .sink(receiveCompletion: { [weak self] error in
             switch error {
             case .failure(let error):
+                PlaylistMediaStreamer.clearNowPlayingInfo()
                 self?.assetStateObserver.removeAll()
                 completion?(error)
             case .finished:
@@ -326,6 +333,7 @@ extension PlaylistViewController: PlaylistViewControllerDelegate {
             }
         }, receiveValue: { [weak self] _ in
             guard let self = self else {
+                PlaylistMediaStreamer.clearNowPlayingInfo()
                 completion?(.cancelled)
                 return
             }
@@ -335,6 +343,7 @@ extension PlaylistViewController: PlaylistViewControllerDelegate {
             // Item can be streamed, so let's retrieve its URL from our DB
             guard let index = PlaylistManager.shared.index(of: item.pageSrc),
                   let item = PlaylistManager.shared.itemAtIndex(index) else {
+                PlaylistMediaStreamer.clearNowPlayingInfo()
                 completion?(.expired)
                 return
             }
@@ -345,25 +354,49 @@ extension PlaylistViewController: PlaylistViewControllerDelegate {
                           url: url,
                           autoPlayEnabled: self.listController.autoPlayEnabled)
                 .handleEvents(receiveCancel: {
+                    PlaylistMediaStreamer.clearNowPlayingInfo()
                     completion?(.cancelled)
                 })
                 .sink(receiveCompletion: { [weak self] error in
                     self?.assetStateObserver.removeAll()
                     switch error {
                     case .failure(let error):
+                        PlaylistMediaStreamer.clearNowPlayingInfo()
                         completion?(.other(error))
                     case .finished:
                         break
                     }
                 }, receiveValue: { [weak self] _ in
-                    self?.assetStateObserver.removeAll()
+                    guard let self = self else {
+                        PlaylistMediaStreamer.clearNowPlayingInfo()
+                        return
+                    }
+                    
+                    self.assetStateObserver.removeAll()
+                    PlaylistMediaStreamer.setNowPlayingInfo(item, withPlayer: self.player)
                     completion?(.none)
                 }).store(in: &self.assetStateObserver)
                 log.debug("Playing Live Video: \(self.player.isLiveMedia)")
             } else {
+                PlaylistMediaStreamer.clearNowPlayingInfo()
                 completion?(.expired)
             }
         }).store(in: &assetStateObserver)
+    }
+    
+    func deleteItem(item: PlaylistInfo, at index: Int) {
+        PlaylistManager.shared.delete(item: item)
+        
+        if currentlyPlayingItemIndex == index {
+            PlaylistMediaStreamer.clearNowPlayingInfo()
+            
+            currentlyPlayingItemIndex = -1
+            playerView.resetVideoInfo()
+            stop(playerView)
+            
+            // Cancel all loading.
+            assetStateObserver.removeAll()
+        }
     }
     
     func updateLastPlayedItem(item: PlaylistInfo) {
@@ -548,14 +581,34 @@ extension PlaylistViewController: VideoViewDelegate {
     }
     
     func play(_ videoView: VideoView) {
-        player.play()
+        if isPlaying {
+            playerView.toggleOverlays(showOverlay: playerView.isOverlayDisplayed)
+        } else {
+            playerView.controlsView.playPauseButton.setImage(#imageLiteral(resourceName: "playlist_pause"), for: .normal)
+            playerView.toggleOverlays(showOverlay: false)
+            playerView.isOverlayDisplayed = false
+            
+            player.play()
+        }
     }
     
     func pause(_ videoView: VideoView) {
-        player.pause()
+        if isPlaying {
+            playerView.controlsView.playPauseButton.setImage(#imageLiteral(resourceName: "playlist_play"), for: .normal)
+            playerView.toggleOverlays(showOverlay: true)
+            playerView.isOverlayDisplayed = true
+            
+            player.pause()
+        } else {
+            playerView.toggleOverlays(showOverlay: playerView.isOverlayDisplayed)
+        }
     }
     
     func stop(_ videoView: VideoView) {
+        playerView.controlsView.playPauseButton.setImage(#imageLiteral(resourceName: "playlist_play"), for: .normal)
+        playerView.toggleOverlays(showOverlay: true)
+        playerView.isOverlayDisplayed = true
+        
         player.stop()
     }
     
@@ -670,107 +723,3 @@ extension PlaylistViewController: VideoViewDelegate {
         return true
     }
 }
-
-/*
-
-// MARK: - CarPlay Delegate
-extension ListController: MPPlayableContentDelegate {
-    func playableContentManager(_ contentManager: MPPlayableContentManager, didUpdate context: MPPlayableContentManagerContext) {
-        // This only ever shows "Connected" in an actual car. The simulator is no good.
-        if context.endpointAvailable || AVAudioSession.sharedInstance().currentRoute.outputs.first?.portType == .carAudio {
-            // CarPlay
-            print("CAR PLAY CONNECTED")
-        } else {
-            print("CAR PLAY DISCONNECTED")
-        }
-    }
-    
-    func playableContentManager(_ contentManager: MPPlayableContentManager, initiatePlaybackOfContentItemAt indexPath: IndexPath, completionHandler: @escaping (Error?) -> Void) {
-        
-        if indexPath.count == 2 {
-            // Item Section
-            ensureMainThreadSync {
-                let mediaItem = PlaylistManager.shared.itemAtIndex(indexPath.item)
-                self.contentManager.nowPlayingIdentifiers = [mediaItem.name]
-
-                mediaInfo.loadMediaItem(mediaItem, index: indexPath.item) { error in
-                    switch error {
-                    case .none:
-                        MPNowPlayingInfoCenter.default().playbackState = .playing
-                        completionHandler(nil)
-                    case .expired:
-                        MPNowPlayingInfoCenter.default().playbackState = .stopped
-                        completionHandler(Strings.PlayList.expiredAlertDescription)
-                    case .error(let error):
-                        MPNowPlayingInfoCenter.default().playbackState = .stopped
-                        completionHandler(error)
-                    }
-                }
-            }
-        } else {
-            // Tab Section
-            completionHandler(nil)
-        }
-        
-        // Workaround to see carplay NowPlaying on the simulator
-        #if targetEnvironment(simulator)
-        ensureMainThreadSync {
-            UIApplication.shared.endReceivingRemoteControlEvents()
-            UIApplication.shared.beginReceivingRemoteControlEvents()
-        }
-        #endif
-    }
-    
-    func beginLoadingChildItems(at indexPath: IndexPath, completionHandler: @escaping (Error?) -> Void) {
-        completionHandler(nil)
-    }
-}
-
-extension ListController: MPPlayableContentDataSource {
-    func numberOfChildItems(at indexPath: IndexPath) -> Int {
-        if indexPath.indices.count == 0 {
-            return 1 // 1 Tab.
-        }
-        
-        return ensureMainThreadSync {
-            return PlaylistManager.shared.numberOfAssets
-        }
-    }
-    
-    func childItemsDisplayPlaybackProgress(at indexPath: IndexPath) -> Bool {
-        true
-    }
-    
-    func contentItem(at indexPath: IndexPath) -> MPContentItem? {
-        // Tab Section
-        if indexPath.count == 1 {
-            let item = MPContentItem(identifier: "BravePlaylist")
-            item.title = "Brave Playlist"
-            item.isContainer = true
-            item.isPlayable = false
-            let imageIcon = #imageLiteral(resourceName: "settings-shields")
-            item.artwork = MPMediaItemArtwork(boundsSize: imageIcon.size, requestHandler: { _ -> UIImage in
-                return imageIcon
-            })
-            return item
-        }
-        
-        if indexPath.count == 2 {
-            // Items section
-            return ensureMainThreadSync {
-                let mediaItem = PlaylistManager.shared.itemAtIndex(indexPath.item)
-                let cacheState = PlaylistManager.shared.state(for: mediaItem.pageSrc)
-                let item = MPContentItem(identifier: mediaItem.name)
-                item.title = mediaItem.name
-                item.subtitle = mediaItem.pageSrc
-                item.isPlayable = true
-                item.isStreamingContent = cacheState != .downloaded
-                loadThumbnail(item: mediaItem, contentItem: item)
-                return item
-            }
-        }
-        
-        return nil
-    }
-}
-*/

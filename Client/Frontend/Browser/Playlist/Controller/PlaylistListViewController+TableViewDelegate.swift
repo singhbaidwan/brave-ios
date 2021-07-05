@@ -8,6 +8,7 @@ import UIKit
 import BraveShared
 import Shared
 import Data
+import MediaPlayer
 
 private let log = Logger.browserLogger
 
@@ -75,20 +76,15 @@ extension PlaylistListViewController: UITableViewDelegate {
             let alert = UIAlertController(
                 title: Strings.PlayList.removePlaylistVideoAlertTitle, message: Strings.PlayList.removePlaylistVideoAlertMessage, preferredStyle: style)
             
-            alert.addAction(UIAlertAction(title: Strings.PlayList.removeActionButtonTitle, style: .destructive, handler: { _ in
-                PlaylistManager.shared.delete(item: currentItem)
-
-                //TODO: FIX!
-//                if self.currentlyPlayingItemIndex == indexPath.row {
-//                    self.currentlyPlayingItemIndex = -1
-//                    self.mediaInfo.nowPlayingInfo = nil
-//                    self.mediaInfo.updateNowPlayingMediaArtwork(image: nil)
-//
-//                    self.updateTableBackgroundView()
-//                    self.playerView.resetVideoInfo()
-//                    self.activityIndicator.stopAnimating()
-//                    self.playerView.stop()
-//                }
+            alert.addAction(UIAlertAction(title: Strings.PlayList.removeActionButtonTitle, style: .destructive, handler: { [weak self] _ in
+                guard let self = self else { return }
+                
+                self.delegate?.deleteItem(item: currentItem, at: indexPath.row)
+                
+                if self.delegate?.currentPlaylistItem == nil {
+                    self.updateTableBackgroundView()
+                    self.activityIndicator.stopAnimating()
+                }
             }))
             
             alert.addAction(UIAlertAction(title: Strings.cancelButtonTitle, style: .cancel, handler: nil))

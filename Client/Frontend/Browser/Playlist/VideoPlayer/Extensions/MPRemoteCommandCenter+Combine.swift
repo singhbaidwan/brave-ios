@@ -7,59 +7,6 @@ import Foundation
 import MediaPlayer
 import Combine
 
-//class PlaylistControlCenterManager: NSObject {
-//    private weak var playerView: VideoView?
-//    private var commandObservers = Set<AnyCancellable>()
-//    private var rateObserver: NSKeyValueObservation?
-//    public var nowPlayingInfo: PlaylistInfo? {
-//        didSet {
-//            updateNowPlayingMediaInfo()
-//        }
-//    }
-//    
-//    init(playerView: VideoView) {
-//        self.playerView = playerView
-//        super.init()
-//    }
-//    
-//    private func addCommandObservers() {
-//        updateNowPlayingMediaInfo()
-//        rateObserver = playerView?.player.observe(\AVPlayer.rate, changeHandler: { [weak self] _, _ in
-//            self?.updateNowPlayingMediaInfo()
-//        })
-//    }
-//    
-//    deinit {
-//        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
-//    }
-//    
-//    func updateNowPlayingMediaInfo() {
-//        if let nowPlayingItem = self.nowPlayingInfo {
-//            MPNowPlayingInfoCenter.default().nowPlayingInfo = [
-//                MPNowPlayingInfoPropertyMediaType: "Audio",
-//                MPMediaItemPropertyTitle: nowPlayingItem.name,
-//                MPMediaItemPropertyArtist: URL(string: nowPlayingItem.pageSrc)?.baseDomain ?? nowPlayingItem.pageSrc,
-//                MPMediaItemPropertyPlaybackDuration: TimeInterval(nowPlayingItem.duration),
-//                MPNowPlayingInfoPropertyPlaybackRate: Double(self.playerView?.player.rate ?? 1.0),
-//                MPNowPlayingInfoPropertyPlaybackProgress: Float(0.0),
-//                MPNowPlayingInfoPropertyElapsedPlaybackTime: Double(self.playerView?.player.currentTime().seconds ?? 0.0)
-//            ]
-//        } else {
-//            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
-//        }
-//    }
-//    
-//    func updateNowPlayingMediaArtwork(image: UIImage?) {
-//        if let image = image {
-//            MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size, requestHandler: { _ -> UIImage in
-//                // Do not resize image here.
-//                // According to Apple it isn't necessary to use expensive resize operations
-//                return image
-//            })
-//        }
-//    }
-//}
-
 extension MPRemoteCommandCenter {
     func publisher(for event: Command) -> EventPublisher {
         EventPublisher(command: event.command)

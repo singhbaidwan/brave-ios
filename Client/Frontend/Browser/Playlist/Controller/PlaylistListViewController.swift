@@ -341,9 +341,7 @@ extension PlaylistListViewController {
 
         let selectedCell = tableView.cellForRow(at: indexPath) as? PlaylistCell
         playerView.setVideoInfo(videoDomain: item.pageSrc, videoTitle: item.pageTitle)
-        
-        // TODO: FIX!
-        //mediaInfo.updateNowPlayingMediaArtwork(image: selectedCell?.thumbnailView.image)
+        PlaylistMediaStreamer.setNowPlayingMediaArtwork(image: selectedCell?.thumbnailView.image)
         completion?(item)
     }
     

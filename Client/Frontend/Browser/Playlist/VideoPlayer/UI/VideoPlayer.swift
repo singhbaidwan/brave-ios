@@ -67,9 +67,10 @@ class VideoView: UIView, VideoTrackerBarDelegate {
     }
     
     // State
+    var isOverlayDisplayed = false
+    
     private var isSeeking = false
     private(set) var isFullscreen = false
-    private var isOverlayDisplayed = false
     private var wasPlayingBeforeSeeking = false
     private var playbackRate: Float = 1.0
     private var playerLayer: AVPlayerLayer?
@@ -467,34 +468,14 @@ class VideoView: UIView, VideoTrackerBarDelegate {
     }
     
     func play() {
-        if delegate?.isPlaying == true {
-            toggleOverlays(showOverlay: isOverlayDisplayed)
-        } else {
-            controlsView.playPauseButton.setImage(#imageLiteral(resourceName: "playlist_pause"), for: .normal)
-            toggleOverlays(showOverlay: false)
-            isOverlayDisplayed = false
-            
-            delegate?.play(self)
-        }
+        delegate?.play(self)
     }
     
     func pause() {
-        if delegate?.isPlaying == true {
-            controlsView.playPauseButton.setImage(#imageLiteral(resourceName: "playlist_play"), for: .normal)
-            toggleOverlays(showOverlay: true)
-            isOverlayDisplayed = true
-            
-            delegate?.pause(self)
-        } else {
-            toggleOverlays(showOverlay: isOverlayDisplayed)
-        }
+        delegate?.pause(self)
     }
     
     func stop() {
-        controlsView.playPauseButton.setImage(#imageLiteral(resourceName: "playlist_play"), for: .normal)
-        toggleOverlays(showOverlay: true)
-        isOverlayDisplayed = true
-        
         delegate?.stop(self)
     }
     
