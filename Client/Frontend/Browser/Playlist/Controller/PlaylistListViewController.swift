@@ -182,7 +182,7 @@ class PlaylistListViewController: UIViewController {
         let lastPlayedTime = Preferences.Playlist.lastPlayedItemTime.value
         if item.pageSrc == Preferences.Playlist.lastPlayedItemUrl.value &&
             lastPlayedTime > 0.0 &&
-            lastPlayedTime < delegate?.currentPlaylistItem?.duration.seconds ?? 0.0 &&
+            lastPlayedTime < delegate?.currentPlaylistAsset?.duration.seconds ?? 0.0 &&
             Preferences.Playlist.playbackLeftOff.value {
             self.playerView.seek(to: Preferences.Playlist.lastPlayedItemTime.value)
         }

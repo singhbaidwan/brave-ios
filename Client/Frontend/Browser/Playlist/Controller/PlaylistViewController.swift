@@ -33,6 +33,7 @@ protocol PlaylistViewControllerDelegate: AnyObject {
     func displayExpiredResourceError(item: PlaylistInfo)
     
     var currentPlaylistItem: AVPlayerItem? { get }
+    var currentPlaylistAsset: AVAsset? { get }
 }
 
 // MARK: PlaylistViewController
@@ -77,7 +78,7 @@ class PlaylistViewController: UIViewController {
         player.pictureInPictureController?.stopPictureInPicture()
         
         // Stop media playback
-        playerView.stop()
+        stop(playerView)
         
         // If this controller is retained in app-delegate for Picture-In-Picture support
         // then we need to re-attach the player layer
@@ -485,6 +486,10 @@ extension PlaylistViewController: PlaylistViewControllerDelegate {
     var currentPlaylistItem: AVPlayerItem? {
         player.currentItem
     }
+    
+    var currentPlaylistAsset: AVAsset? {
+        player.currentItem?.asset
+    }
 }
 
 // MARK: - VideoViewDelegate
@@ -747,8 +752,10 @@ extension PlaylistViewController: VideoViewDelegate {
                 let endTime = CMTimeConvertScale(item.asset.duration, timescale: self.player.currentTime.timescale, method: .roundHalfAwayFromZero)
                 self.playerView.controlsView.trackBar.setTimeRange(currentTime: item.currentTime(), endTime: endTime)
                 
+                // Successfully loaded
+                resolver(.success(Void()))
+                
                 if autoPlayEnabled {
-                    resolver(.success(Void()))
                     self.play(videoView) // Play the new item
                 }
             }).store(in: &self.assetLoadingStateObservers)
