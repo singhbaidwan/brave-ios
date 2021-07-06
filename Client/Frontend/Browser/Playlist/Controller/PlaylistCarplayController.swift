@@ -33,7 +33,7 @@ class PlaylistCarplayController: NSObject {
         PlaylistManager.shared.reloadData()
         
         playlistItemIds = (0..<PlaylistManager.shared.numberOfAssets).map({
-            PlaylistManager.shared.itemAtIndex($0)?.pageSrc ?? UUID().uuidString
+            PlaylistManager.shared.itemAtIndex($0)?.src ?? UUID().uuidString
         })
         
         contentManager.dataSource = self
@@ -102,7 +102,7 @@ extension PlaylistCarplayController: MPPlayableContentDelegate {
                     return
                 }
                 
-                self.contentManager.nowPlayingIdentifiers = [mediaItem.pageSrc]
+                self.contentManager.nowPlayingIdentifiers = [mediaItem.src]
                 self.playItem(item: mediaItem) { error in
                     switch error {
                     case .other(let error):
@@ -179,7 +179,7 @@ extension PlaylistCarplayController: MPPlayableContentDataSource {
                     return
                 }
 
-                let cacheState = PlaylistManager.shared.state(for: mediaItem.pageSrc)
+                let cacheState = PlaylistManager.shared.state(for: mediaItem.src)
                 item.title = mediaItem.name
                 item.subtitle = mediaItem.pageSrc
                 item.isPlayable = true
