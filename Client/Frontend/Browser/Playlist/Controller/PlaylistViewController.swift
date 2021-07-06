@@ -221,7 +221,7 @@ class PlaylistViewController: UIViewController {
             let endTime = CMTimeConvertScale(currentItem.asset.duration, timescale: event.mediaPlayer.currentTime.timescale, method: .roundHalfAwayFromZero)
             
             self.playerView.controlsView.trackBar.setTimeRange(currentTime: currentItem.currentTime(), endTime: endTime)
-            self.player.seek(to: .zero)
+            event.mediaPlayer.seek(to: .zero)
             
             self.playerView.controlsView.playPauseButton.isEnabled = true
             self.playerView.controlsView.playPauseButton.setImage(#imageLiteral(resourceName: "playlist_play"), for: .normal)

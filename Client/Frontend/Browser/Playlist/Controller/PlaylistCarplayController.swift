@@ -8,6 +8,7 @@ import Combine
 import CarPlay
 import MediaPlayer
 import Data
+import BraveShared
 import Shared
 
 private let log = Logger.browserLogger
@@ -20,6 +21,7 @@ class PlaylistCarplayController: NSObject {
     private var assetStateObservers = Set<AnyCancellable>()
     private var assetLoadingStateObservers = Set<AnyCancellable>()
     private var playlistItemIds = [String]()
+    private var currentlyPlayingItemIndex = -1
     
     init(player: MediaPlayer, contentManager: MPPlayableContentManager) {
         self.player = player
@@ -66,13 +68,20 @@ class PlaylistCarplayController: NSObject {
             MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPNowPlayingInfoPropertyPlaybackRate] = self.player.rate
         }.store(in: &playerStateObservers)
         
+        player.publisher(for: .previousTrack).sink { [weak self] _ in
+            self?.onPreviousTrack(isUserInitiated: true)
+        }.store(in: &playerStateObservers)
+        
+        player.publisher(for: .nextTrack).sink { [weak self] _ in
+            self?.onNextTrack(isUserInitiated: true)
+        }.store(in: &playerStateObservers)
+        
         player.publisher(for: .finishedPlaying).sink { [weak self] event in
-            guard let self = self,
-                  let currentItem = event.mediaPlayer.currentItem else { return }
+            guard let self = self else { return }
             
             event.mediaPlayer.pause()
-            self.player.seek(to: .zero)
-            //self.onNextTrack(self.playerView, isUserInitiated: false)
+            event.mediaPlayer.seek(to: .zero)
+            self.onNextTrack(isUserInitiated: false)
         }.store(in: &playerStateObservers)
     }
 }
@@ -93,7 +102,7 @@ extension PlaylistCarplayController: MPPlayableContentDelegate {
                     return
                 }
                 
-                self.contentManager.nowPlayingIdentifiers = [mediaItem.name]
+                self.contentManager.nowPlayingIdentifiers = [mediaItem.pageSrc]
                 self.playItem(item: mediaItem) { error in
                     switch error {
                     case .other(let error):
@@ -102,6 +111,7 @@ extension PlaylistCarplayController: MPPlayableContentDelegate {
                     case .expired:
                         completionHandler(Strings.PlayList.expiredAlertDescription)
                     case .none:
+                        self.currentlyPlayingItemIndex = indexPath.item
                         completionHandler(nil)
                     case .cancelled:
                         log.debug("User Cancelled Playlist playback")
@@ -184,6 +194,88 @@ extension PlaylistCarplayController: MPPlayableContentDataSource {
 }
 
 extension PlaylistCarplayController {
+    func onPreviousTrack(isUserInitiated: Bool) {
+        if currentlyPlayingItemIndex <= 0 {
+            return
+        }
+        
+        let index = currentlyPlayingItemIndex - 1
+        if index < PlaylistManager.shared.numberOfAssets,
+           let item = PlaylistManager.shared.itemAtIndex(index) {
+            self.currentlyPlayingItemIndex = index
+            self.playItem(item: item) { [weak self] error in
+                guard let self = self else { return }
+                
+                switch error {
+                case .other(let err):
+                    log.error(err)
+                    self.displayLoadingResourceError()
+                case .expired:
+                    self.displayExpiredResourceError(item: item)
+                case .none:
+                    self.currentlyPlayingItemIndex = index
+                    self.updateLastPlayedItem(item: item)
+                case .cancelled:
+                    log.debug("User Cancelled Playlist Playback")
+                }
+            }
+        }
+    }
+    
+    func onNextTrack(isUserInitiated: Bool) {
+        let assetCount = PlaylistManager.shared.numberOfAssets
+        let isAtEnd = currentlyPlayingItemIndex >= assetCount - 1
+        var index = currentlyPlayingItemIndex
+
+        switch player.repeatState {
+        case .none:
+            if isAtEnd {
+                player.pictureInPictureController?.delegate = nil
+                player.pictureInPictureController?.stopPictureInPicture()
+                player.stop()
+
+                if let delegate = UIApplication.shared.delegate as? AppDelegate {
+                    delegate.playlistRestorationController = nil
+                }
+                return
+            }
+            index += 1
+        case .repeatOne:
+            player.seek(to: 0.0)
+            player.play()
+            return
+        case .repeatAll:
+            index = isAtEnd ? 0 : index + 1
+        }
+
+        if index >= 0,
+           let item = PlaylistManager.shared.itemAtIndex(index) {
+            self.playItem(item: item) { [weak self] error in
+                guard let self = self else { return }
+
+                switch error {
+                case .other(let err):
+                    log.error(err)
+                    self.displayLoadingResourceError()
+                case .expired:
+                    if isUserInitiated || self.player.repeatState == .repeatOne || assetCount <= 1 {
+                        self.displayExpiredResourceError(item: item)
+                    } else {
+                        DispatchQueue.main.async {
+                            self.currentlyPlayingItemIndex = index
+                            self.onNextTrack(isUserInitiated: isUserInitiated)
+                        }
+                    }
+                case .none:
+                    self.currentlyPlayingItemIndex = index
+                    self.updateLastPlayedItem(item: item)
+                case .cancelled:
+                    log.debug("User Cancelled Playlist Playback")
+                }
+            }
+        }
+    }
+    
     private func play() {
         player.play()
     }
@@ -362,6 +454,50 @@ extension PlaylistCarplayController {
                 completion?(.expired)
             }
         }).store(in: &assetStateObservers)
+    }
+    
+    func updateLastPlayedItem(item: PlaylistInfo) {
+        Preferences.Playlist.lastPlayedItemUrl.value = item.pageSrc
+        
+        if let playTime = player.currentItem?.currentTime(),
+           Preferences.Playlist.playbackLeftOff.value {
+            Preferences.Playlist.lastPlayedItemTime.value = playTime.seconds
+        } else {
+            Preferences.Playlist.lastPlayedItemTime.value = 0.0
+        }
+    }
+    
+    func displayExpiredResourceError(item: PlaylistInfo?) {
+        let browserController = (UIApplication.shared.delegate as? AppDelegate)?.browserViewController
+        
+        if let item = item {
+            let alert = UIAlertController(title: Strings.PlayList.expiredAlertTitle,
+                                          message: Strings.PlayList.expiredAlertDescription, preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: Strings.PlayList.reopenButtonTitle, style: .default, handler: { _ in
+                
+                if let url = URL(string: item.pageSrc) {
+                    browserController?.dismiss(animated: true, completion: nil)
+                    browserController?.openURLInNewTab(url, isPrivileged: false)
+                }
+            }))
+            alert.addAction(UIAlertAction(title: Strings.cancelButtonTitle, style: .cancel, handler: nil))
+            browserController?.present(alert, animated: true, completion: nil)
+        } else {
+            let alert = UIAlertController(title: Strings.PlayList.expiredAlertTitle,
+                                          message: Strings.PlayList.expiredAlertDescription, preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: Strings.OKString, style: .default, handler: nil))
+            browserController?.present(alert, animated: true, completion: nil)
+        }
+    }
+    
+    func displayLoadingResourceError() {
+        let browserController = (UIApplication.shared.delegate as? AppDelegate)?.browserViewController
+        
+        let alert = UIAlertController(
+            title: Strings.PlayList.sorryAlertTitle, message: Strings.PlayList.loadResourcesErrorAlertDescription, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: Strings.PlayList.okayButtonTitle, style: .default, handler: nil))
+        
+        browserController?.present(alert, animated: true, completion: nil)
     }
 }
 

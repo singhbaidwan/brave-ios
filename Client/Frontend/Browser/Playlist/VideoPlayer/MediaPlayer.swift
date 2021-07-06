@@ -383,9 +383,12 @@ extension MediaPlayer {
         .sink { [weak self] _ in
             guard let self = self else { return }
             
-            if self.pictureInPictureController?.isPictureInPictureActive == false {
-                self.playerLayer.player = nil
+            if let pictureInPictureController = self.pictureInPictureController,
+               pictureInPictureController.isPictureInPictureActive {
+                return
             }
+            
+            self.playerLayer.player = nil
         }.store(in: &notificationObservers)
         
         NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)
@@ -393,9 +396,12 @@ extension MediaPlayer {
         .sink { [weak self] _ in
             guard let self = self else { return }
             
-            if self.pictureInPictureController?.isPictureInPictureActive == false {
-                self.playerLayer.player = self.player
+            if let pictureInPictureController = self.pictureInPictureController,
+               pictureInPictureController.isPictureInPictureActive {
+                return
             }
+            
+            self.playerLayer.player = self.player
         }.store(in: &notificationObservers)
         
         NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime)
