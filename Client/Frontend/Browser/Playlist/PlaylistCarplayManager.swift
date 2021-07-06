@@ -4,165 +4,85 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import Foundation
+import Combine
 import MediaPlayer
-import CarPlay
-import AVKit
 
-import SDWebImage
-import Shared
-import Data
-
-/*
+/// Lightweight class that manages a single MediaPlayer item
+/// The MediaPlayer is then passed to any controller that needs to use it.
 class PlaylistCarplayManager: NSObject {
+    private var carPlayStatusObservers = Set<AnyCancellable>()
     private let contentManager = MPPlayableContentManager.shared()
-    public let videoView = VideoView()
-    private let mediaInfo: PlaylistMediaInfo
-    private let backgroundFrc = PlaylistItem.backgroundFrc()
+    private let carPlayStatus = CurrentValueSubject<Bool, Never>(false)
+    private var carPlayController: PlaylistCarplayController?
+    private weak var mediaPlayer: MediaPlayer?
     
-    override init() {
-        mediaInfo = PlaylistMediaInfo(playerView: videoView)
+    // There can only ever be one instance of this class
+    // Because there can only be a single AudioSession and MediaPlayer
+    // in use at any given moment
+    static let shared = {
+        PlaylistCarplayManager()
+    }()
+    
+    private override init() {
         super.init()
         
-        contentManager.delegate = self
-        contentManager.dataSource = self
+        // We need to observe when CarPlay is connected
+        // That way, we can  determine where the controls are coming from for Playlist
+        // OR determine where the AudioSession is outputting
         
-        DispatchQueue.main.async {
-            PlaylistManager.shared.reloadData()
-            self.contentManager.beginUpdates()
-            self.contentManager.endUpdates()
-            self.contentManager.reloadData()
-        }
+        AVAudioSession.sharedInstance().currentRoute.outputs.publisher.contains(where: { $0.portType == .carAudio }).sink { [weak self] isCarPlayAvailable in
+            self?.attemptInterfaceConnection(isCarPlayAvailable: isCarPlayAvailable)
+        }.store(in: &carPlayStatusObservers)
+        
+        UIDevice.current.publisher(for: \.userInterfaceIdiom).map({ $0 == .carPlay }).sink { [weak self] isCarPlayAvailable in
+            self?.attemptInterfaceConnection(isCarPlayAvailable: isCarPlayAvailable)
+        }.store(in: &carPlayStatusObservers)
+        
+        carPlayController = getCarPlayController()
     }
     
-    private func ensureMainThreadSync<T>(execute work: () throws -> T) rethrows -> T {
-        if Thread.current.isMainThread {
-            return try work()
-        } else {
-            return try DispatchQueue.main.sync { try work() }
-        }
+    deinit {
+        carPlayController = nil
+        mediaPlayer = nil
+    }
+    
+    func getCarPlayController() -> PlaylistCarplayController {
+        // If there is no media player, create one,
+        // pass it to the car-play controller
+        let mediaPlayer = self.mediaPlayer ?? MediaPlayer()
+        let carPlayController = PlaylistCarplayController(player: mediaPlayer, contentManager: contentManager)
+        self.mediaPlayer = mediaPlayer
+        return carPlayController
+    }
+    
+    func getPlaylistController() -> PlaylistViewController {
+        // If there is no media player, create one,
+        // pass it to the play-list controller
+        let mediaPlayer = self.mediaPlayer ?? MediaPlayer()
+        let playlistController = PlaylistViewController(player: mediaPlayer)
+        self.mediaPlayer = mediaPlayer
+        return playlistController
+    }
+    
+    func attemptInterfaceConnection(isCarPlayAvailable: Bool) {
+        // If there is no media player, create one,
+        // pass it to the carplay controller
+//        if isCarPlayAvailable {
+//            // Protect against reentrancy.
+//            if self.carPlayController == nil {
+//                self.carPlayController = self.getCarPlayController()
+//            }
+//        } else {
+//            self.carPlayController = nil
+//        }
+//
+//        self.carPlayStatus.send(isCarPlayAvailable)
+//        print("CARPLAY CONNECTED: \(isCarPlayAvailable)")
     }
 }
 
 extension PlaylistCarplayManager: MPPlayableContentDelegate {
     func playableContentManager(_ contentManager: MPPlayableContentManager, didUpdate context: MPPlayableContentManagerContext) {
-        
-        if context.endpointAvailable || AVAudioSession.sharedInstance().currentRoute.outputs.first?.portType == .carAudio {
-            // CarPlay
-            print("CAR PLAY CONNECTED")
-        } else {
-            print("CAR PLAY DISCONNECTED")
-        }
-    }
-    
-    func playableContentManager(_ contentManager: MPPlayableContentManager, initiatePlaybackOfContentItemAt indexPath: IndexPath, completionHandler: @escaping (Error?) -> Void) {
-        
-        if indexPath.count == 2 {
-            // Item Section
-            ensureMainThreadSync {
-                let mediaItem = PlaylistManager.shared.itemAtIndex(indexPath.item)
-                self.contentManager.nowPlayingIdentifiers = [mediaItem.name]
-
-                mediaInfo.loadMediaItem(mediaItem, index: indexPath.item) { error in
-                    switch error {
-                    case .none:
-                        MPNowPlayingInfoCenter.default().playbackState = .playing
-                        completionHandler(nil)
-                    case .expired:
-                        MPNowPlayingInfoCenter.default().playbackState = .stopped
-                        completionHandler(Strings.PlayList.expiredAlertDescription)
-                    case .error(let error):
-                        MPNowPlayingInfoCenter.default().playbackState = .stopped
-                        completionHandler(error)
-                    }
-                }
-            }
-        } else {
-            // Tab Section
-            completionHandler(nil)
-        }
-        
-        // Workaround to see carplay NowPlaying on the simulator
-        #if targetEnvironment(simulator)
-        ensureMainThreadSync {
-            UIApplication.shared.endReceivingRemoteControlEvents()
-            UIApplication.shared.beginReceivingRemoteControlEvents()
-        }
-        #endif
-    }
-    
-    func beginLoadingChildItems(at indexPath: IndexPath, completionHandler: @escaping (Error?) -> Void) {
-        completionHandler(nil)
+        attemptInterfaceConnection(isCarPlayAvailable: context.endpointAvailable)
     }
 }
-
-extension PlaylistCarplayManager: MPPlayableContentDataSource {
-    func numberOfChildItems(at indexPath: IndexPath) -> Int {
-        if indexPath.indices.count == 0 {
-            return 1 // 1 Tab.
-        }
-        
-        return ensureMainThreadSync {
-            return PlaylistManager.shared.numberOfAssets
-        }
-    }
-    
-    func childItemsDisplayPlaybackProgress(at indexPath: IndexPath) -> Bool {
-        true
-    }
-    
-    func contentItem(at indexPath: IndexPath) -> MPContentItem? {
-        // Tab Section
-        if indexPath.count == 1 {
-            let item = MPContentItem(identifier: "BravePlaylist")
-            item.title = "Brave Playlist"
-            item.isContainer = true
-            item.isPlayable = false
-            let imageIcon = #imageLiteral(resourceName: "settings-shields")
-            item.artwork = MPMediaItemArtwork(boundsSize: imageIcon.size, requestHandler: { _ -> UIImage in
-                return imageIcon
-            })
-            return item
-        }
-        
-        if indexPath.count == 2 {
-            // Items section
-            return ensureMainThreadSync {
-                let mediaItem = PlaylistManager.shared.itemAtIndex(indexPath.item)
-                let cacheState = PlaylistManager.shared.state(for: mediaItem.pageSrc)
-                let item = MPContentItem(identifier: mediaItem.name)
-                item.title = mediaItem.name
-                item.subtitle = mediaItem.pageSrc
-                item.isPlayable = true
-                item.isStreamingContent = cacheState != .downloaded
-                loadThumbnail(item: mediaItem, contentItem: item)
-                return item
-            }
-        }
-        
-        return nil
-    }
-}
-
-extension MPContentItem {
-    private struct AssociatedKeys {
-        static var thumbnailGenerator: Int = 0
-        static var imageAssetGenerator: Int = 0
-        static var favIconFetcher: Int = 0
-    }
-    
-    var thumbnailGenerator: HLSThumbnailGenerator? {
-        get { objc_getAssociatedObject(self, &AssociatedKeys.thumbnailGenerator) as? HLSThumbnailGenerator }
-        set { objc_setAssociatedObject(self, &AssociatedKeys.thumbnailGenerator, newValue, .OBJC_ASSOCIATION_ASSIGN) }
-    }
-    
-    var imageAssetGenerator: AVAssetImageGenerator? {
-        get { objc_getAssociatedObject(self, &AssociatedKeys.imageAssetGenerator) as? AVAssetImageGenerator }
-        set { objc_setAssociatedObject(self, &AssociatedKeys.imageAssetGenerator, newValue, .OBJC_ASSOCIATION_ASSIGN) }
-    }
-    
-    var favIconFetcher: FavIconImageRenderer? {
-        get { objc_getAssociatedObject(self, &AssociatedKeys.favIconFetcher) as? FavIconImageRenderer }
-        set { objc_setAssociatedObject(self, &AssociatedKeys.favIconFetcher, newValue, .OBJC_ASSOCIATION_ASSIGN) }
-    }
-}
-*/

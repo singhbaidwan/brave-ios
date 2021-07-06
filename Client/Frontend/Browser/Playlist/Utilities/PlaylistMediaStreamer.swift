@@ -120,13 +120,15 @@ class PlaylistMediaStreamer {
             item.mimeType.contains("video") ? .video : .audio
         
         MPNowPlayingInfoCenter.default().nowPlayingInfo = [
-            MPNowPlayingInfoPropertyMediaType: mediaType,
+            MPNowPlayingInfoPropertyMediaType: NSNumber(value: mediaType.rawValue),
             MPMediaItemPropertyTitle: item.name,
             MPMediaItemPropertyArtist: URL(string: item.pageSrc)?.baseDomain ?? item.pageSrc,
-            MPMediaItemPropertyPlaybackDuration: NSNumber(value: item.duration),
-            MPNowPlayingInfoPropertyPlaybackRate: NSNumber(value: player.rate),
-            MPNowPlayingInfoPropertyPlaybackProgress: NSNumber(value: 0.0),
-            MPNowPlayingInfoPropertyElapsedPlaybackTime: NSNumber(value: player.currentTime.seconds)
+            MPMediaItemPropertyPlaybackDuration: item.duration,
+            MPNowPlayingInfoPropertyPlaybackRate: player.rate,
+            MPNowPlayingInfoPropertyPlaybackProgress: 0.0,
+            MPNowPlayingInfoPropertyDefaultPlaybackRate: 1.0,
+            MPNowPlayingInfoPropertyAssetURL: URL(string: item.pageSrc) as Any,
+            MPNowPlayingInfoPropertyElapsedPlaybackTime: player.currentTime.seconds
         ]
     }
     

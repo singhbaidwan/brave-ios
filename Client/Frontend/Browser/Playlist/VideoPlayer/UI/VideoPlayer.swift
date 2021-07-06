@@ -33,6 +33,7 @@ protocol VideoViewDelegate: AnyObject {
     
     var isPlaying: Bool { get }
     var repeatMode: MediaPlayer.RepeatMode { get }
+    var playbackRate: Float { get }
     var isVideoTracksAvailable: Bool { get }
 }
 
@@ -219,17 +220,7 @@ class VideoView: UIView, VideoTrackerBarDelegate {
     @objc
     private func onRepeat(_ button: UIButton) {
         guard let delegate = delegate else { return }
-        
         delegate.toggleRepeatMode(self)
-        
-        switch delegate.repeatMode {
-        case .none:
-            controlsView.repeatButton.setImage(#imageLiteral(resourceName: "playlist_repeat"), for: .normal)
-        case .repeatOne:
-            controlsView.repeatButton.setImage(#imageLiteral(resourceName: "playlist_repeat_one"), for: .normal)
-        case .repeatAll:
-            controlsView.repeatButton.setImage(#imageLiteral(resourceName: "playlist_repeat_all"), for: .normal)
-        }
     }
     
     @objc
@@ -248,6 +239,7 @@ class VideoView: UIView, VideoTrackerBarDelegate {
     private func onPlaybackRateChanged(_ button: UIButton) {
         guard let delegate = delegate else { return }
         
+        var playbackRate = delegate.playbackRate
         if playbackRate == 1.0 {
             playbackRate = 1.5
             button.setTitle("1.5x", for: .normal)
@@ -338,6 +330,7 @@ class VideoView: UIView, VideoTrackerBarDelegate {
         if delegate.isPlaying {
             delegate.pause(self)
             wasPlayingBeforeSeeking = true
+            playbackRate = delegate.playbackRate
         }
         
         toggleOverlays(showOverlay: false, except: [infoView, controlsView], display: [controlsView])

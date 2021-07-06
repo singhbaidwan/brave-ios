@@ -41,7 +41,7 @@ class PlaylistViewController: UIViewController {
     
     // MARK: Properties
 
-    private let player = MediaPlayer()
+    private let player: MediaPlayer
     private let playerView = VideoView()
     private lazy var mediaStreamer = PlaylistMediaStreamer(playerView: playerView)
     
@@ -50,8 +50,18 @@ class PlaylistViewController: UIViewController {
     private let detailController = PlaylistDetailViewController()
     
     private var playerStateObservers = Set<AnyCancellable>()
-    private var assetStateObserver = Set<AnyCancellable>()
+    private var assetStateObservers = Set<AnyCancellable>()
+    private var assetLoadingStateObservers = Set<AnyCancellable>()
     private var currentlyPlayingItemIndex = -1
+    
+    init(player: MediaPlayer) {
+        self.player = player
+        super.init(nibName: nil, bundle: nil)
+    }
+    
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
     
     deinit {
         // Store the last played item's time-offset
@@ -160,6 +170,46 @@ class PlaylistViewController: UIViewController {
     }
     
     private func observePlayerStates() {
+        player.publisher(for: .play).sink { [weak self] _ in
+            self?.playerView.controlsView.playPauseButton.setImage(#imageLiteral(resourceName: "playlist_pause"), for: .normal)
+        }.store(in: &playerStateObservers)
+        
+        player.publisher(for: .pause).sink { [weak self] _ in
+            self?.playerView.controlsView.playPauseButton.setImage(#imageLiteral(resourceName: "playlist_play"), for: .normal)
+        }.store(in: &playerStateObservers)
+        
+        player.publisher(for: .stop).sink { [weak self] _ in
+            self?.playerView.controlsView.playPauseButton.setImage(#imageLiteral(resourceName: "playlist_play"), for: .normal)
+        }.store(in: &playerStateObservers)
+        
+        player.publisher(for: .changePlaybackRate).sink { [weak self] _ in
+            guard let self = self else { return }
+            
+            let playbackRate = self.player.rate
+            let button = self.playerView.controlsView.playbackRateButton
+            
+            if playbackRate == 1.0 {
+                button.setTitle("1x", for: .normal)
+            } else if playbackRate == 1.5 {
+                button.setTitle("1.5x", for: .normal)
+            } else {
+                button.setTitle("2x", for: .normal)
+            }
+        }.store(in: &playerStateObservers)
+        
+        player.publisher(for: .changeRepeatMode).sink { [weak self] _ in
+            guard let self = self else { return }
+            
+            switch self.repeatMode {
+            case .none:
+                self.playerView.controlsView.repeatButton.setImage(#imageLiteral(resourceName: "playlist_repeat"), for: .normal)
+            case .repeatOne:
+                self.playerView.controlsView.repeatButton.setImage(#imageLiteral(resourceName: "playlist_repeat_one"), for: .normal)
+            case .repeatAll:
+                self.playerView.controlsView.repeatButton.setImage(#imageLiteral(resourceName: "playlist_repeat_all"), for: .normal)
+            }
+        }.store(in: &playerStateObservers)
+        
         player.publisher(for: .finishedPlaying).sink { [weak self] event in
             guard let self = self,
                   let currentItem = event.mediaPlayer.currentItem else { return }
@@ -276,8 +326,8 @@ extension PlaylistViewController: PlaylistViewControllerDelegate {
     }
     
     func playItem(item: PlaylistInfo, completion: ((PlaylistMediaStreamer.PlaybackError) -> Void)?) {
-        self.assetStateObserver.forEach({ $0.cancel() })
-        self.assetStateObserver.removeAll()
+        assetLoadingStateObservers.removeAll()
+        assetStateObservers.removeAll()
         
         // This MUST be checked.
         // The user must not be able to alter a player that isn't visible from any UI!
@@ -285,7 +335,7 @@ extension PlaylistViewController: PlaylistViewControllerDelegate {
         // controller through this UI so long as it is attached to it.
         // If it isn't attached, the player can only be controlled through the car-play interface.
         guard player.isAttachedToDisplay else {
-            completion?(.none)
+            completion?(.cancelled)
             return
         }
 
@@ -296,20 +346,27 @@ extension PlaylistViewController: PlaylistViewControllerDelegate {
                let asset = PlaylistManager.shared.assetAtIndex(index) {
                 load(playerView, asset: asset, autoPlayEnabled: listController.autoPlayEnabled)
                 .handleEvents(receiveCancel: {
+                    PlaylistMediaStreamer.clearNowPlayingInfo()
                     completion?(.cancelled)
                 })
-                .sink(receiveCompletion: { [weak self] error in
-                    self?.assetStateObserver.removeAll()
+                .sink(receiveCompletion: { error in
                     switch error {
                     case .failure(let error):
+                        PlaylistMediaStreamer.clearNowPlayingInfo()
                         completion?(.other(error))
                     case .finished:
                         break
                     }
                 }, receiveValue: { [weak self] _ in
-                    self?.assetStateObserver.removeAll()
+                    guard let self = self else {
+                        PlaylistMediaStreamer.clearNowPlayingInfo()
+                        completion?(.cancelled)
+                        return
+                    }
+                    
+                    PlaylistMediaStreamer.setNowPlayingInfo(item, withPlayer: self.player)
                     completion?(.none)
-                }).store(in: &assetStateObserver)
+                }).store(in: &assetLoadingStateObservers)
             } else {
                 completion?(.expired)
             }
@@ -322,11 +379,10 @@ extension PlaylistViewController: PlaylistViewControllerDelegate {
             PlaylistMediaStreamer.clearNowPlayingInfo()
             completion?(.cancelled)
         })
-        .sink(receiveCompletion: { [weak self] error in
+        .sink(receiveCompletion: { error in
             switch error {
             case .failure(let error):
                 PlaylistMediaStreamer.clearNowPlayingInfo()
-                self?.assetStateObserver.removeAll()
                 completion?(error)
             case .finished:
                 break
@@ -337,8 +393,6 @@ extension PlaylistViewController: PlaylistViewControllerDelegate {
                 completion?(.cancelled)
                 return
             }
-            
-            self.assetStateObserver.removeAll()
             
             // Item can be streamed, so let's retrieve its URL from our DB
             guard let index = PlaylistManager.shared.index(of: item.pageSrc),
@@ -357,8 +411,7 @@ extension PlaylistViewController: PlaylistViewControllerDelegate {
                     PlaylistMediaStreamer.clearNowPlayingInfo()
                     completion?(.cancelled)
                 })
-                .sink(receiveCompletion: { [weak self] error in
-                    self?.assetStateObserver.removeAll()
+                .sink(receiveCompletion: { error in
                     switch error {
                     case .failure(let error):
                         PlaylistMediaStreamer.clearNowPlayingInfo()
@@ -369,19 +422,19 @@ extension PlaylistViewController: PlaylistViewControllerDelegate {
                 }, receiveValue: { [weak self] _ in
                     guard let self = self else {
                         PlaylistMediaStreamer.clearNowPlayingInfo()
+                        completion?(.cancelled)
                         return
                     }
                     
-                    self.assetStateObserver.removeAll()
                     PlaylistMediaStreamer.setNowPlayingInfo(item, withPlayer: self.player)
                     completion?(.none)
-                }).store(in: &self.assetStateObserver)
+                }).store(in: &self.assetLoadingStateObservers)
                 log.debug("Playing Live Video: \(self.player.isLiveMedia)")
             } else {
                 PlaylistMediaStreamer.clearNowPlayingInfo()
                 completion?(.expired)
             }
-        }).store(in: &assetStateObserver)
+        }).store(in: &assetStateObservers)
     }
     
     func deleteItem(item: PlaylistInfo, at index: Int) {
@@ -395,7 +448,8 @@ extension PlaylistViewController: PlaylistViewControllerDelegate {
             stop(playerView)
             
             // Cancel all loading.
-            assetStateObserver.removeAll()
+            assetLoadingStateObservers.removeAll()
+            assetStateObservers.removeAll()
         }
     }
     
@@ -648,7 +702,7 @@ extension PlaylistViewController: VideoViewDelegate {
     }
     
     func load(_ videoView: VideoView, asset: AVURLAsset, autoPlayEnabled: Bool) -> AnyPublisher<Void, Error> {
-        assetStateObserver.removeAll()
+        assetLoadingStateObservers.removeAll()
         player.stop()
         
         return Future { [weak self] resolver in
@@ -659,9 +713,8 @@ extension PlaylistViewController: VideoViewDelegate {
             
             self.player.load(asset: asset)
             .receive(on: RunLoop.main)
-            .sink(receiveCompletion: { [weak self] error in
+            .sink(receiveCompletion: { error in
                 if case .failure(let error) = error {
-                    self?.assetStateObserver.removeAll()
                     resolver(.failure(error))
                 }
             }, receiveValue: { [weak self] isNewItem in
@@ -674,8 +727,6 @@ extension PlaylistViewController: VideoViewDelegate {
                     resolver(.failure("Couldn't load playlist item"))
                     return
                 }
-                
-                self.assetStateObserver.removeAll()
                 
                 // We are playing the same item again..
                 if !isNewItem {
@@ -700,7 +751,7 @@ extension PlaylistViewController: VideoViewDelegate {
                     resolver(.success(Void()))
                     self.play(videoView) // Play the new item
                 }
-            }).store(in: &self.assetStateObserver)
+            }).store(in: &self.assetLoadingStateObservers)
         }.eraseToAnyPublisher()
     }
     
@@ -710,6 +761,10 @@ extension PlaylistViewController: VideoViewDelegate {
     
     var repeatMode: MediaPlayer.RepeatMode {
         player.repeatState
+    }
+    
+    var playbackRate: Float {
+        return player.rate
     }
     
     var isVideoTracksAvailable: Bool {
