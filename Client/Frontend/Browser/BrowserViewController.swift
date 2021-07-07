@@ -1548,8 +1548,11 @@ class BrowserViewController: UIViewController {
         _ = tabManager.addTabAndSelect(request, isPrivate: isPrivate)
     }
 
-    func openBlankNewTab(attemptLocationFieldFocus: Bool, isPrivate: Bool = false, searchFor searchText: String? = nil) {
-        popToBVC()
+    func openBlankNewTab(attemptLocationFieldFocus: Bool, isPrivate: Bool = false, searchFor searchText: String? = nil, isExternal: Bool = false) {
+        if !isExternal {
+            popToBVC()
+        }
+        
         openURLInNewTab(nil, isPrivate: isPrivate, isPrivileged: true)
         let freshTab = tabManager.selectedTab
         
