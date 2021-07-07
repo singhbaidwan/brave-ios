@@ -326,118 +326,6 @@ extension PlaylistViewController: PlaylistViewControllerDelegate {
         }
     }
     
-    func playItem(item: PlaylistInfo, completion: ((PlaylistMediaStreamer.PlaybackError) -> Void)?) {
-        assetLoadingStateObservers.removeAll()
-        assetStateObservers.removeAll()
-        
-        // This MUST be checked.
-        // The user must not be able to alter a player that isn't visible from any UI!
-        // This is because, if car-play is interface is attached, the player can only be
-        // controller through this UI so long as it is attached to it.
-        // If it isn't attached, the player can only be controlled through the car-play interface.
-        guard player.isAttachedToDisplay else {
-            completion?(.cancelled)
-            return
-        }
-
-        // If the item is cached, load it from the cache and play it.
-        let cacheState = PlaylistManager.shared.state(for: item.pageSrc)
-        if cacheState != .invalid {
-            if let index = PlaylistManager.shared.index(of: item.pageSrc),
-               let asset = PlaylistManager.shared.assetAtIndex(index) {
-                load(playerView, asset: asset, autoPlayEnabled: listController.autoPlayEnabled)
-                .handleEvents(receiveCancel: {
-                    PlaylistMediaStreamer.clearNowPlayingInfo()
-                    completion?(.cancelled)
-                })
-                .sink(receiveCompletion: { error in
-                    switch error {
-                    case .failure(let error):
-                        PlaylistMediaStreamer.clearNowPlayingInfo()
-                        completion?(.other(error))
-                    case .finished:
-                        break
-                    }
-                }, receiveValue: { [weak self] _ in
-                    guard let self = self else {
-                        PlaylistMediaStreamer.clearNowPlayingInfo()
-                        completion?(.cancelled)
-                        return
-                    }
-                    
-                    PlaylistMediaStreamer.setNowPlayingInfo(item, withPlayer: self.player)
-                    completion?(.none)
-                }).store(in: &assetLoadingStateObservers)
-            } else {
-                completion?(.expired)
-            }
-            return
-        }
-        
-        // The item is not cached so we should attempt to stream it
-        mediaStreamer.loadMediaStreamingAsset(item)
-        .handleEvents(receiveCancel: {
-            PlaylistMediaStreamer.clearNowPlayingInfo()
-            completion?(.cancelled)
-        })
-        .sink(receiveCompletion: { error in
-            switch error {
-            case .failure(let error):
-                PlaylistMediaStreamer.clearNowPlayingInfo()
-                completion?(error)
-            case .finished:
-                break
-            }
-        }, receiveValue: { [weak self] _ in
-            guard let self = self else {
-                PlaylistMediaStreamer.clearNowPlayingInfo()
-                completion?(.cancelled)
-                return
-            }
-            
-            // Item can be streamed, so let's retrieve its URL from our DB
-            guard let index = PlaylistManager.shared.index(of: item.pageSrc),
-                  let item = PlaylistManager.shared.itemAtIndex(index) else {
-                PlaylistMediaStreamer.clearNowPlayingInfo()
-                completion?(.expired)
-                return
-            }
-            
-            // Attempt to play the stream
-            if let url = URL(string: item.pageSrc) {
-                self.load(self.playerView,
-                          url: url,
-                          autoPlayEnabled: self.listController.autoPlayEnabled)
-                .handleEvents(receiveCancel: {
-                    PlaylistMediaStreamer.clearNowPlayingInfo()
-                    completion?(.cancelled)
-                })
-                .sink(receiveCompletion: { error in
-                    switch error {
-                    case .failure(let error):
-                        PlaylistMediaStreamer.clearNowPlayingInfo()
-                        completion?(.other(error))
-                    case .finished:
-                        break
-                    }
-                }, receiveValue: { [weak self] _ in
-                    guard let self = self else {
-                        PlaylistMediaStreamer.clearNowPlayingInfo()
-                        completion?(.cancelled)
-                        return
-                    }
-                    
-                    PlaylistMediaStreamer.setNowPlayingInfo(item, withPlayer: self.player)
-                    completion?(.none)
-                }).store(in: &self.assetLoadingStateObservers)
-                log.debug("Playing Live Video: \(self.player.isLiveMedia)")
-            } else {
-                PlaylistMediaStreamer.clearNowPlayingInfo()
-                completion?(.expired)
-            }
-        }).store(in: &assetStateObservers)
-    }
-    
     func deleteItem(item: PlaylistInfo, at index: Int) {
         PlaylistManager.shared.delete(item: item)
         
@@ -760,6 +648,122 @@ extension PlaylistViewController: VideoViewDelegate {
                 }
             }).store(in: &self.assetLoadingStateObservers)
         }.eraseToAnyPublisher()
+    }
+    
+    func playItem(item: PlaylistInfo, completion: ((PlaylistMediaStreamer.PlaybackError) -> Void)?) {
+        assetLoadingStateObservers.removeAll()
+        assetStateObservers.removeAll()
+        
+        // This MUST be checked.
+        // The user must not be able to alter a player that isn't visible from any UI!
+        // This is because, if car-play is interface is attached, the player can only be
+        // controller through this UI so long as it is attached to it.
+        // If it isn't attached, the player can only be controlled through the car-play interface.
+        guard player.isAttachedToDisplay else {
+            completion?(.cancelled)
+            return
+        }
+
+        // If the item is cached, load it from the cache and play it.
+        let cacheState = PlaylistManager.shared.state(for: item.pageSrc)
+        if cacheState != .invalid {
+            if let index = PlaylistManager.shared.index(of: item.pageSrc),
+               let asset = PlaylistManager.shared.assetAtIndex(index) {
+                load(playerView, asset: asset, autoPlayEnabled: listController.autoPlayEnabled)
+                .handleEvents(receiveCancel: {
+                    PlaylistMediaStreamer.clearNowPlayingInfo()
+                    completion?(.cancelled)
+                })
+                .sink(receiveCompletion: { error in
+                    switch error {
+                    case .failure(let error):
+                        PlaylistMediaStreamer.clearNowPlayingInfo()
+                        completion?(.other(error))
+                    case .finished:
+                        break
+                    }
+                }, receiveValue: { [weak self] _ in
+                    guard let self = self else {
+                        PlaylistMediaStreamer.clearNowPlayingInfo()
+                        completion?(.cancelled)
+                        return
+                    }
+                    
+                    PlaylistMediaStreamer.setNowPlayingInfo(item, withPlayer: self.player)
+                    completion?(.none)
+                }).store(in: &assetLoadingStateObservers)
+            } else {
+                completion?(.expired)
+            }
+            return
+        }
+        
+        // The item is not cached so we should attempt to stream it
+        streamItem(item: item, completion: completion)
+    }
+    
+    func streamItem(item: PlaylistInfo, completion: ((PlaylistMediaStreamer.PlaybackError) -> Void)?) {
+        mediaStreamer.loadMediaStreamingAsset(item)
+        .handleEvents(receiveCancel: {
+            PlaylistMediaStreamer.clearNowPlayingInfo()
+            completion?(.cancelled)
+        })
+        .sink(receiveCompletion: { error in
+            switch error {
+            case .failure(let error):
+                PlaylistMediaStreamer.clearNowPlayingInfo()
+                completion?(error)
+            case .finished:
+                break
+            }
+        }, receiveValue: { [weak self] _ in
+            guard let self = self else {
+                PlaylistMediaStreamer.clearNowPlayingInfo()
+                completion?(.cancelled)
+                return
+            }
+            
+            // Item can be streamed, so let's retrieve its URL from our DB
+            guard let index = PlaylistManager.shared.index(of: item.pageSrc),
+                  let item = PlaylistManager.shared.itemAtIndex(index) else {
+                PlaylistMediaStreamer.clearNowPlayingInfo()
+                completion?(.expired)
+                return
+            }
+            
+            // Attempt to play the stream
+            if let url = URL(string: item.pageSrc) {
+                self.load(self.playerView,
+                          url: url,
+                          autoPlayEnabled: self.listController.autoPlayEnabled)
+                .handleEvents(receiveCancel: {
+                    PlaylistMediaStreamer.clearNowPlayingInfo()
+                    completion?(.cancelled)
+                })
+                .sink(receiveCompletion: { error in
+                    switch error {
+                    case .failure(let error):
+                        PlaylistMediaStreamer.clearNowPlayingInfo()
+                        completion?(.other(error))
+                    case .finished:
+                        break
+                    }
+                }, receiveValue: { [weak self] _ in
+                    guard let self = self else {
+                        PlaylistMediaStreamer.clearNowPlayingInfo()
+                        completion?(.cancelled)
+                        return
+                    }
+                    
+                    PlaylistMediaStreamer.setNowPlayingInfo(item, withPlayer: self.player)
+                    completion?(.none)
+                }).store(in: &self.assetLoadingStateObservers)
+                log.debug("Playing Live Video: \(self.player.isLiveMedia)")
+            } else {
+                PlaylistMediaStreamer.clearNowPlayingInfo()
+                completion?(.expired)
+            }
+        }).store(in: &assetStateObservers)
     }
     
     var isPlaying: Bool {

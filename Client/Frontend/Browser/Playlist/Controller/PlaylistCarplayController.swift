@@ -288,11 +288,11 @@ extension PlaylistCarplayController {
         player.stop()
     }
     
-    private func seekBackwards(_ videoView: VideoView) {
+    private func seekBackwards() {
         player.seekBackwards()
     }
     
-    private func seekForwards(_ videoView: VideoView) {
+    private func seekForwards() {
         player.seekForwards()
     }
     
@@ -395,6 +395,10 @@ extension PlaylistCarplayController {
         }
         
         // The item is not cached so we should attempt to stream it
+        streamItem(item: item, completion: completion)
+    }
+    
+    func streamItem(item: PlaylistInfo, completion: ((PlaylistMediaStreamer.PlaybackError) -> Void)?) {
         mediaStreamer.loadMediaStreamingAsset(item)
         .handleEvents(receiveCancel: {
             PlaylistMediaStreamer.clearNowPlayingInfo()
