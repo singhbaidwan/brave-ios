@@ -154,6 +154,7 @@ class PlaylistHelper: NSObject, TabContentScript {
                 // It is best to assume the item can be played
                 // In the worst case, if it can't be played, it will show an error
                 completion(true)
+                completion(isAssetPlayable())
             }
         case .online:
             // Fetch the playable status asynchronously
