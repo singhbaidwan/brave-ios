@@ -124,11 +124,10 @@ class PlaylistMediaStreamer {
             MPMediaItemPropertyTitle: item.name,
             MPMediaItemPropertyArtist: URL(string: item.pageSrc)?.baseDomain ?? item.pageSrc,
             MPMediaItemPropertyPlaybackDuration: item.duration,
-            MPNowPlayingInfoPropertyPlaybackRate: player.rate,
             MPNowPlayingInfoPropertyPlaybackProgress: 0.0,
-            MPNowPlayingInfoPropertyDefaultPlaybackRate: 1.0,
+//            MPNowPlayingInfoPropertyDefaultPlaybackRate: 1.0,
             MPNowPlayingInfoPropertyAssetURL: URL(string: item.pageSrc) as Any,
-            MPNowPlayingInfoPropertyElapsedPlaybackTime: player.currentTime.seconds
+            MPNowPlayingInfoPropertyElapsedPlaybackTime: 0.0, //player.currentTime.seconds
         ]
     }
     
@@ -138,11 +137,18 @@ class PlaylistMediaStreamer {
     
     static func setNowPlayingMediaArtwork(image: UIImage?) {
         if let image = image {
-            MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size, requestHandler: { _ -> UIImage in
+            let artwork = MPMediaItemArtwork(boundsSize: image.size, requestHandler: { _ -> UIImage in
                 // Do not resize image here.
                 // According to Apple it isn't necessary to use expensive resize operations
                 return image
             })
+            setNowPlayingMediaArtwork(artwork: artwork)
+        }
+    }
+    
+    static func setNowPlayingMediaArtwork(artwork: MPMediaItemArtwork?) {
+        if let artwork = artwork {
+            MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPMediaItemPropertyArtwork] = artwork
         }
     }
     

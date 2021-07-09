@@ -27,6 +27,7 @@ class MediaPlayer: NSObject {
     private(set) public var pendingMediaItem: AVPlayerItem?
     private(set) public var pictureInPictureController: AVPictureInPictureController?
     private(set) var repeatState: RepeatMode = .none
+    private(set) var previousRate: Float = 0.0
     
     public var isPlaying: Bool {
         // It is better NOT to keep tracking of isPlaying OR rate > 0.0
@@ -149,20 +150,23 @@ class MediaPlayer: NSObject {
     
     func play() {
         if !isPlaying {
-            playSubscriber.send(EventNotification(mediaPlayer: self, event: .play))
             player.play()
+            player.rate = previousRate
+            playSubscriber.send(EventNotification(mediaPlayer: self, event: .play))
         }
     }
     
     func pause() {
         if isPlaying {
-            pauseSubscriber.send(EventNotification(mediaPlayer: self, event: .pause))
+            previousRate = player.rate
             player.pause()
+            pauseSubscriber.send(EventNotification(mediaPlayer: self, event: .pause))
         }
     }
     
     func stop() {
         if isPlaying {
+            previousRate = 0.0
             player.pause()
             player.replaceCurrentItem(with: nil)
             stopSubscriber.send(EventNotification(mediaPlayer: self, event: .stop))
@@ -262,6 +266,7 @@ class MediaPlayer: NSObject {
     }
     
     func setPlaybackRate(rate: Float) {
+        previousRate = player.rate
         player.rate = rate
         changePlaybackRateSubscriber.send(EventNotification(mediaPlayer: self,
                                                             event: .changePlaybackRate))

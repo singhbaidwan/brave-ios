@@ -106,11 +106,18 @@ class PlaylistListViewController: UIViewController {
         // After reloading all data, update the background
         guard PlaylistManager.shared.numberOfAssets > 0 else {
             self.updateTableBackgroundView()
+            self.autoPlayEnabled = true
             return
         }
         
         // Otherwise prepare to play the first item
         playerView.setControlsEnabled(true)
+        
+        // If car play is active or media is already playing, do nothing
+        if PlaylistCarplayManager.shared.isCarPlayAvailable && (delegate?.currentPlaylistAsset != nil || delegate?.isPlaying ?? false) {
+            self.autoPlayEnabled = true
+            return
+        }
         
         // If there is no last played item, then just select the first item in the playlist
         // which will play it if auto-play is enabled.
@@ -134,6 +141,8 @@ class PlaylistListViewController: UIViewController {
             }
             
             delegate.playItem(item: item) { [weak self] error in
+                PlaylistCarplayManager.shared.currentPlaylistItem = nil
+                
                 guard let self = self,
                       let delegate = self.delegate else {
                     self?.commitPlayerItemTransaction(at: indexPath,
@@ -155,6 +164,7 @@ class PlaylistListViewController: UIViewController {
                                                      isExpired: true)
                     delegate.displayExpiredResourceError(item: item)
                 case .none:
+                    PlaylistCarplayManager.shared.currentPlaylistItem = item
                     self.commitPlayerItemTransaction(at: indexPath,
                                                      isExpired: false)
                     

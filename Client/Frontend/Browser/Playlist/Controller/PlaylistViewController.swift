@@ -32,6 +32,7 @@ protocol PlaylistViewControllerDelegate: AnyObject {
     func displayLoadingResourceError()
     func displayExpiredResourceError(item: PlaylistInfo)
     
+    var isPlaying: Bool { get }
     var currentPlaylistItem: AVPlayerItem? { get }
     var currentPlaylistAsset: AVAsset? { get }
 }
@@ -53,7 +54,6 @@ class PlaylistViewController: UIViewController {
     private var playerStateObservers = Set<AnyCancellable>()
     private var assetStateObservers = Set<AnyCancellable>()
     private var assetLoadingStateObservers = Set<AnyCancellable>()
-    private var currentlyPlayingItemIndex = -1
     
     init(player: MediaPlayer) {
         self.player = player
@@ -78,7 +78,10 @@ class PlaylistViewController: UIViewController {
         player.pictureInPictureController?.stopPictureInPicture()
         
         // Stop media playback
-        stop(playerView)
+        if !PlaylistCarplayManager.shared.isCarPlayAvailable {
+            stop(playerView)
+            PlaylistCarplayManager.shared.currentPlaylistItem = nil
+        }
         
         // If this controller is retained in app-delegate for Picture-In-Picture support
         // then we need to re-attach the player layer
@@ -98,6 +101,7 @@ class PlaylistViewController: UIViewController {
         
         // Setup delegates and state observers
         attachPlayerView()
+        updatePlayerUI()
         observePlayerStates()
         listController.delegate = self
         
@@ -170,6 +174,43 @@ class PlaylistViewController: UIViewController {
         }
     }
     
+    private func updatePlayerUI() {
+        // Update play/pause button
+        if isPlaying {
+            playerView.controlsView.playPauseButton.setImage(#imageLiteral(resourceName: "playlist_pause"), for: .normal)
+        } else {
+            playerView.controlsView.playPauseButton.setImage(#imageLiteral(resourceName: "playlist_play"), for: .normal)
+        }
+        
+        // Update play-backrate button
+        let playbackRate = player.rate
+        let button = playerView.controlsView.playbackRateButton
+        
+        if playbackRate <= 1.0 {
+            button.setTitle("1x", for: .normal)
+        } else if playbackRate == 1.5 {
+            button.setTitle("1.5x", for: .normal)
+        } else {
+            button.setTitle("2x", for: .normal)
+        }
+        
+        // Update repeatMode button
+        switch repeatMode {
+        case .none:
+            playerView.controlsView.repeatButton.setImage(#imageLiteral(resourceName: "playlist_repeat"), for: .normal)
+        case .repeatOne:
+            playerView.controlsView.repeatButton.setImage(#imageLiteral(resourceName: "playlist_repeat_one"), for: .normal)
+        case .repeatAll:
+            playerView.controlsView.repeatButton.setImage(#imageLiteral(resourceName: "playlist_repeat_all"), for: .normal)
+        }
+        
+        if let item = PlaylistCarplayManager.shared.currentPlaylistItem {
+            playerView.setVideoInfo(videoDomain: item.pageSrc, videoTitle: item.pageTitle)
+        } else {
+            playerView.resetVideoInfo()
+        }
+    }
+    
     private func observePlayerStates() {
         player.publisher(for: .play).sink { [weak self] _ in
             self?.playerView.controlsView.playPauseButton.setImage(#imageLiteral(resourceName: "playlist_pause"), for: .normal)
@@ -189,7 +230,7 @@ class PlaylistViewController: UIViewController {
             let playbackRate = self.player.rate
             let button = self.playerView.controlsView.playbackRateButton
             
-            if playbackRate == 1.0 {
+            if playbackRate <= 1.0 {
                 button.setTitle("1x", for: .normal)
             } else if playbackRate == 1.5 {
                 button.setTitle("1.5x", for: .normal)
@@ -200,7 +241,6 @@ class PlaylistViewController: UIViewController {
         
         player.publisher(for: .changeRepeatMode).sink { [weak self] _ in
             guard let self = self else { return }
-            
             switch self.repeatMode {
             case .none:
                 self.playerView.controlsView.repeatButton.setImage(#imageLiteral(resourceName: "playlist_repeat"), for: .normal)
@@ -329,10 +369,10 @@ extension PlaylistViewController: PlaylistViewControllerDelegate {
     func deleteItem(item: PlaylistInfo, at index: Int) {
         PlaylistManager.shared.delete(item: item)
         
-        if currentlyPlayingItemIndex == index {
+        if PlaylistCarplayManager.shared.currentlyPlayingItemIndex == index {
             PlaylistMediaStreamer.clearNowPlayingInfo()
             
-            currentlyPlayingItemIndex = -1
+            PlaylistCarplayManager.shared.currentlyPlayingItemIndex = -1
             playerView.resetVideoInfo()
             stop(playerView)
             
@@ -388,11 +428,11 @@ extension PlaylistViewController: VideoViewDelegate {
     }
     
     func onPreviousTrack(_ videoView: VideoView, isUserInitiated: Bool) {
-        if currentlyPlayingItemIndex <= 0 {
+        if PlaylistCarplayManager.shared.currentlyPlayingItemIndex <= 0 {
             return
         }
         
-        let index = currentlyPlayingItemIndex - 1
+        let index = PlaylistCarplayManager.shared.currentlyPlayingItemIndex - 1
         if index < PlaylistManager.shared.numberOfAssets {
             let indexPath = IndexPath(row: index, section: 0)
             listController.prepareToPlayItem(at: indexPath) { [weak self] item in
@@ -403,7 +443,7 @@ extension PlaylistViewController: VideoViewDelegate {
                     return
                 }
                 
-                self.currentlyPlayingItemIndex = indexPath.row
+                PlaylistCarplayManager.shared.currentlyPlayingItemIndex = indexPath.row
                 self.playItem(item: item) { [weak self] error in
                     guard let self = self else { return }
                     
@@ -417,7 +457,7 @@ extension PlaylistViewController: VideoViewDelegate {
                         self.displayExpiredResourceError(item: item)
                     case .none:
                         self.listController.commitPlayerItemTransaction(at: indexPath, isExpired: false)
-                        self.currentlyPlayingItemIndex = index
+                        PlaylistCarplayManager.shared.currentlyPlayingItemIndex = index
                         self.updateLastPlayedItem(item: item)
                     case .cancelled:
                         self.listController.commitPlayerItemTransaction(at: indexPath, isExpired: false)
@@ -430,8 +470,8 @@ extension PlaylistViewController: VideoViewDelegate {
     
     func onNextTrack(_ videoView: VideoView, isUserInitiated: Bool) {
         let assetCount = PlaylistManager.shared.numberOfAssets
-        let isAtEnd = currentlyPlayingItemIndex >= assetCount - 1
-        var index = currentlyPlayingItemIndex
+        let isAtEnd = PlaylistCarplayManager.shared.currentlyPlayingItemIndex >= assetCount - 1
+        var index = PlaylistCarplayManager.shared.currentlyPlayingItemIndex
         
         switch repeatMode {
         case .none:
@@ -482,13 +522,13 @@ extension PlaylistViewController: VideoViewDelegate {
                         } else {
                             DispatchQueue.main.async {
                                 self.listController.commitPlayerItemTransaction(at: indexPath, isExpired: false)
-                                self.currentlyPlayingItemIndex = index
+                                PlaylistCarplayManager.shared.currentlyPlayingItemIndex = index
                                 self.onNextTrack(videoView, isUserInitiated: isUserInitiated)
                             }
                         }
                     case .none:
                         self.listController.commitPlayerItemTransaction(at: indexPath, isExpired: false)
-                        self.currentlyPlayingItemIndex = index
+                        PlaylistCarplayManager.shared.currentlyPlayingItemIndex = index
                         self.updateLastPlayedItem(item: item)
                     case .cancelled:
                         self.listController.commitPlayerItemTransaction(at: indexPath, isExpired: false)

@@ -35,14 +35,14 @@ public class PlaylistThumbnailRenderer {
                 }.eraseToAnyPublisher()
             }
             
-            chainedGenerator.receive(on: RunLoop.main).sink {
+            chainedGenerator.receive(on: RunLoop.main).sink(receiveCompletion: {
                 if case .failure(let error) = $0 {
                     log.error(error)
                     completion(nil)
                 }
-            } receiveValue: {
+            }, receiveValue: {
                 completion($0)
-            }.store(in: &thumbnailGenerator)
+            }).store(in: &thumbnailGenerator)
         }
     }
     

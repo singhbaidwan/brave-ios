@@ -21,7 +21,6 @@ class PlaylistCarplayController: NSObject {
     private var assetStateObservers = Set<AnyCancellable>()
     private var assetLoadingStateObservers = Set<AnyCancellable>()
     private var playlistItemIds = [String]()
-    private var currentlyPlayingItemIndex = -1
     
     init(player: MediaPlayer, contentManager: MPPlayableContentManager) {
         self.player = player
@@ -38,7 +37,12 @@ class PlaylistCarplayController: NSObject {
         
         contentManager.dataSource = self
         contentManager.delegate = self
-        contentManager.reloadData()
+        
+        DispatchQueue.main.async {
+            contentManager.beginUpdates()
+            contentManager.endUpdates()
+            contentManager.reloadData()
+        }
         
         // Workaround to see carplay NowPlaying on the simulator
         #if targetEnvironment(simulator)
@@ -47,6 +51,12 @@ class PlaylistCarplayController: NSObject {
             UIApplication.shared.beginReceivingRemoteControlEvents()
         }
         #endif
+    }
+    
+    deinit {
+//        contentManager.delegate = nil
+//        contentManager.dataSource = nil
+//        contentManager.reloadData()
     }
     
     func observePlayerStates() {
@@ -63,9 +73,7 @@ class PlaylistCarplayController: NSObject {
         }.store(in: &playerStateObservers)
         
         player.publisher(for: .changePlaybackRate).sink { [weak self] _ in
-            guard let self = self else { return }
-            
-            MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPNowPlayingInfoPropertyPlaybackRate] = self.player.rate
+            MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPNowPlayingInfoPropertyPlaybackRate] = self?.player.rate
         }.store(in: &playerStateObservers)
         
         player.publisher(for: .previousTrack).sink { [weak self] _ in
@@ -77,11 +85,9 @@ class PlaylistCarplayController: NSObject {
         }.store(in: &playerStateObservers)
         
         player.publisher(for: .finishedPlaying).sink { [weak self] event in
-            guard let self = self else { return }
-            
             event.mediaPlayer.pause()
             event.mediaPlayer.seek(to: .zero)
-            self.onNextTrack(isUserInitiated: false)
+            self?.onNextTrack(isUserInitiated: false)
         }.store(in: &playerStateObservers)
     }
 }
@@ -89,7 +95,7 @@ class PlaylistCarplayController: NSObject {
 extension PlaylistCarplayController: MPPlayableContentDelegate {
     func playableContentManager(_ contentManager: MPPlayableContentManager, didUpdate context: MPPlayableContentManagerContext) {
         
-        PlaylistCarplayManager.shared.attemptInterfaceConnection(isCarPlayAvailable: context.endpointAvailable)
+        log.debug("CAR PLAY CONNECTED: \(context.endpointAvailable)")
     }
     
     func playableContentManager(_ contentManager: MPPlayableContentManager, initiatePlaybackOfContentItemAt indexPath: IndexPath, completionHandler: @escaping (Error?) -> Void) {
@@ -103,7 +109,9 @@ extension PlaylistCarplayController: MPPlayableContentDelegate {
                 }
                 
                 self.contentManager.nowPlayingIdentifiers = [mediaItem.src]
-                self.playItem(item: mediaItem) { error in
+                self.playItem(item: mediaItem) { [weak self] error in
+                    PlaylistCarplayManager.shared.currentPlaylistItem = nil
+                    
                     switch error {
                     case .other(let error):
                         log.error(error)
@@ -111,7 +119,15 @@ extension PlaylistCarplayController: MPPlayableContentDelegate {
                     case .expired:
                         completionHandler(Strings.PlayList.expiredAlertDescription)
                     case .none:
-                        self.currentlyPlayingItemIndex = indexPath.item
+                        guard let self = self else {
+                            completionHandler("Unknown Error")
+                            return
+                        }
+                        
+                        PlaylistCarplayManager.shared.currentlyPlayingItemIndex = indexPath.item
+                        PlaylistCarplayManager.shared.currentPlaylistItem = mediaItem
+                        PlaylistMediaStreamer.setNowPlayingMediaArtwork(artwork: self.contentItem(at: indexPath)?.artwork)
+                        
                         completionHandler(nil)
                     case .cancelled:
                         log.debug("User Cancelled Playlist playback")
@@ -134,8 +150,9 @@ extension PlaylistCarplayController: MPPlayableContentDelegate {
     }
     
     func beginLoadingChildItems(at indexPath: IndexPath, completionHandler: @escaping (Error?) -> Void) {
+        // For some odd reason, this is never called in the simulator.
+        // It is only called in the car and that's fine.
         completionHandler(nil)
-        contentManager.reloadData()
     }
 }
 
@@ -195,15 +212,15 @@ extension PlaylistCarplayController: MPPlayableContentDataSource {
 
 extension PlaylistCarplayController {
     func onPreviousTrack(isUserInitiated: Bool) {
-        if currentlyPlayingItemIndex <= 0 {
+        if PlaylistCarplayManager.shared.currentlyPlayingItemIndex <= 0 {
             return
         }
         
-        let index = currentlyPlayingItemIndex - 1
+        let index = PlaylistCarplayManager.shared.currentlyPlayingItemIndex - 1
         if index < PlaylistManager.shared.numberOfAssets,
            let item = PlaylistManager.shared.itemAtIndex(index) {
-            self.currentlyPlayingItemIndex = index
-            self.playItem(item: item) { [weak self] error in
+            PlaylistCarplayManager.shared.currentlyPlayingItemIndex = index
+            playItem(item: item) { [weak self] error in
                 guard let self = self else { return }
                 
                 switch error {
@@ -213,7 +230,7 @@ extension PlaylistCarplayController {
                 case .expired:
                     self.displayExpiredResourceError(item: item)
                 case .none:
-                    self.currentlyPlayingItemIndex = index
+                    PlaylistCarplayManager.shared.currentlyPlayingItemIndex = index
                     self.updateLastPlayedItem(item: item)
                 case .cancelled:
                     log.debug("User Cancelled Playlist Playback")
@@ -224,8 +241,8 @@ extension PlaylistCarplayController {
     
     func onNextTrack(isUserInitiated: Bool) {
         let assetCount = PlaylistManager.shared.numberOfAssets
-        let isAtEnd = currentlyPlayingItemIndex >= assetCount - 1
-        var index = currentlyPlayingItemIndex
+        let isAtEnd = PlaylistCarplayManager.shared.currentlyPlayingItemIndex >= assetCount - 1
+        var index = PlaylistCarplayManager.shared.currentlyPlayingItemIndex
 
         switch player.repeatState {
         case .none:
@@ -262,12 +279,12 @@ extension PlaylistCarplayController {
                         self.displayExpiredResourceError(item: item)
                     } else {
                         DispatchQueue.main.async {
-                            self.currentlyPlayingItemIndex = index
+                            PlaylistCarplayManager.shared.currentlyPlayingItemIndex = index
                             self.onNextTrack(isUserInitiated: isUserInitiated)
                         }
                     }
                 case .none:
-                    self.currentlyPlayingItemIndex = index
+                    PlaylistCarplayManager.shared.currentlyPlayingItemIndex = index
                     self.updateLastPlayedItem(item: item)
                 case .cancelled:
                     log.debug("User Cancelled Playlist Playback")
