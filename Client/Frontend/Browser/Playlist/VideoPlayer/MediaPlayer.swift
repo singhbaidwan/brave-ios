@@ -19,6 +19,12 @@ class MediaPlayer: NSObject {
         case repeatAll
     }
     
+    public enum ShuffleMode: CaseIterable {
+        case none
+        case items
+        case collection
+    }
+    
     // MARK: - Public Variables
     
     private(set) public var isSeeking = false
@@ -27,7 +33,8 @@ class MediaPlayer: NSObject {
     private(set) public var pendingMediaItem: AVPlayerItem?
     private(set) public var pictureInPictureController: AVPictureInPictureController?
     private(set) var repeatState: RepeatMode = .none
-    private(set) var previousRate: Float = 0.0
+    private(set) var shuffleState: ShuffleMode = .none
+    private(set) var previousRate: Float = -1.0
     
     public var isPlaying: Bool {
         // It is better NOT to keep tracking of isPlaying OR rate > 0.0
@@ -63,12 +70,19 @@ class MediaPlayer: NSObject {
         super.init()
         
         playerLayer.player = self.player
+        
+        // Register for notifications
         registerNotifications()
         registerControlCenterNotifications()
         registerPictureInPictureNotifications()
         
+        // For now, disable shuffling
+        MPRemoteCommandCenter.Command.changeShuffleModeCommand.command.isEnabled = false
+        
+        // Start receiving remote commands
         UIApplication.shared.beginReceivingRemoteControlEvents()
         
+        // Enable our audio session
         do {
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
             try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
@@ -78,12 +92,14 @@ class MediaPlayer: NSObject {
     }
     
     deinit {
+        // Unregister for notifications
         notificationObservers.removeAll()
         
         if let periodicTimeObserver = periodicTimeObserver {
             player.removeTimeObserver(periodicTimeObserver)
         }
         
+        // Disable our audio session
         do {
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, policy: .default, options: [])
             try AVAudioSession.sharedInstance().setActive(false)
@@ -91,6 +107,7 @@ class MediaPlayer: NSObject {
             log.error(error)
         }
         
+        // Stop receiving remote commands
         UIApplication.shared.endReceivingRemoteControlEvents()
     }
     
@@ -151,7 +168,7 @@ class MediaPlayer: NSObject {
     func play() {
         if !isPlaying {
             player.play()
-            player.rate = previousRate
+            player.rate = previousRate < 0.0 ? 1.0 : previousRate
             playSubscriber.send(EventNotification(mediaPlayer: self, event: .play))
         }
     }
@@ -231,12 +248,16 @@ class MediaPlayer: NSObject {
     }
     
     func toggleRepeatMode() {
+        let command = MPRemoteCommandCenter.shared().changeRepeatModeCommand
         switch repeatState {
         case .none:
+            command.currentRepeatType = .off
             self.repeatState = .repeatOne
         case .repeatOne:
+            command.currentRepeatType = .one
             self.repeatState = .repeatAll
         case .repeatAll:
+            command.currentRepeatType = .all
             self.repeatState = .none
         }
         
@@ -245,6 +266,16 @@ class MediaPlayer: NSObject {
     }
     
     func toggleShuffleMode() {
+        let command = MPRemoteCommandCenter.shared().changeShuffleModeCommand
+        switch shuffleState {
+        case .none:
+            command.currentShuffleType = .items
+        case .items:
+            command.currentShuffleType = .collections
+        case .collection:
+            command.currentShuffleType = .off
+        }
+        
         changeShuffleModeSubscriber.send(EventNotification(mediaPlayer: self,
                                                            event: .changeShuffleMode))
     }

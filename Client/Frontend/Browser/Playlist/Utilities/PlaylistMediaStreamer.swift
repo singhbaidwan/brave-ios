@@ -128,6 +128,8 @@ class PlaylistMediaStreamer {
 //            MPNowPlayingInfoPropertyDefaultPlaybackRate: 1.0,
             MPNowPlayingInfoPropertyAssetURL: URL(string: item.pageSrc) as Any,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: 0.0, //player.currentTime.seconds
+            //MPNowPlayingInfoPropertyPlaybackQueueIndex: 0,
+            //MPNowPlayingInfoPropertyPlaybackQueueCount: 0
         ]
     }
     
